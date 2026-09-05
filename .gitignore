@@ -1,0 +1,11 @@
+build/
+dist/
+*.fpk
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+.DS_Store
+frontend/node_modules/
+frontend/dist/

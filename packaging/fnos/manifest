@@ -1,0 +1,15 @@
+appname=meizang
+version=0.4.0
+display_name=媒藏
+desc=运行在飞牛 fnOS 上的本地照片、视频与音乐索引、整理和查重工具。
+source=thirdparty
+platform=all
+maintainer=dengyintao
+desktop_uidir=ui
+desktop_applaunchname=meizang.main
+install_dep_apps=python312
+os_min_version=1.2.0401
+micro_app=true
+ctl_stop=true
+checkport=false
+disable_authorization_path=false

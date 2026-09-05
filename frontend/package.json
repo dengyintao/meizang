@@ -1,0 +1,12 @@
+{
+  "name": "meizang-frontend",
+  "private": true,
+  "version": "0.4.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@trimjs/web-app": "0.4.2"
+  }
+}

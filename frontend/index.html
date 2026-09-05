@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b1020">
+    <base href="/app/meizang/">
+    <title>媒藏</title>
+    <link rel="icon" href="favicon.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="媒藏首页">
+          <span class="brand-mark">藏</span>
+          <span><strong>媒藏</strong><small>LOCAL MEDIA LIBRARY</small></span>
+        </a>
+        <nav class="nav" aria-label="主导航">
+          <a href="#overview" data-route="overview" class="active"><span>◫</span>概览</a>
+          <a href="#library" data-route="library"><span>▦</span>媒体库</a>
+          <a href="#duplicates" data-route="duplicates"><span>◉</span>重复文件</a>
+          <a href="#settings" data-route="settings"><span>⌁</span>目录设置</a>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="status-dot"></span>
+          <div><strong>索引服务运行中</strong><small id="version">正在连接…</small></div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">LOCAL MEDIA, BEAUTIFULLY ORGANIZED</p>
+            <h1 id="page-title">媒体概览</h1>
+          </div>
+          <button class="button primary" id="open-add-root"><span>＋</span> 选择媒体目录</button>
+        </header>
+
+        <section class="view active" data-view="overview">
+          <div class="hero-panel">
+            <div>
+              <span class="live-badge">本地优先 · NAS 原生</span>
+              <h2>你的媒体，<br><em>井然有序。</em></h2>
+              <p>统一索引照片、影片与音乐。数据留在 NAS，媒藏只帮你看清并整理它们。</p>
+            </div>
+            <div class="hero-orbit" aria-hidden="true"><span>PHOTO</span><span>VIDEO</span><span>AUDIO</span><b>DK</b></div>
+          </div>
+
+          <div class="stat-grid">
+            <article class="stat-card coral"><span>图片</span><strong id="stat-image">0</strong><small>PHOTOS</small></article>
+            <article class="stat-card violet"><span>视频</span><strong id="stat-video">0</strong><small>VIDEOS</small></article>
+            <article class="stat-card cyan"><span>音频</span><strong id="stat-audio">0</strong><small>AUDIO TRACKS</small></article>
+            <article class="stat-card lime"><span>可疑重复组</span><strong id="stat-duplicates">0</strong><small>DUPLICATE SETS</small></article>
+          </div>
+
+          <div class="two-column">
+            <section class="panel">
+              <div class="panel-head"><div><span class="kicker">LIBRARY ROOTS</span><h3>媒体目录</h3></div><a href="#settings">管理目录 →</a></div>
+              <div id="overview-roots" class="root-list empty-state">还没有媒体目录</div>
+            </section>
+            <section class="panel capacity-panel">
+              <div class="panel-head"><div><span class="kicker">INDEXED DATA</span><h3>索引规模</h3></div></div>
+              <div class="capacity-ring"><div><strong id="stat-total">0</strong><span>个文件</span></div></div>
+              <p>已分析 <strong id="stat-bytes">0 B</strong> 媒体内容</p>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="library">
+          <div class="library-toolbar panel">
+            <div class="type-tabs" role="tablist">
+              <button class="active" data-type="all">全部</button><button data-type="image">图片</button><button data-type="video">视频</button><button data-type="audio">音频</button>
+            </div>
+            <label class="search"><span>⌕</span><input id="asset-search" type="search" placeholder="搜索文件名、标题或路径"></label>
+          </div>
+          <div id="asset-grid" class="asset-grid"></div>
+        </section>
+
+        <section class="view" data-view="duplicates">
+          <div class="section-intro"><div><span class="kicker">SAFE REVIEW</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别。初版仅展示，不会删除任何文件。</p></div><strong id="reclaimable">0 B 可释放</strong></div>
+          <div id="duplicate-list" class="duplicate-list"></div>
+        </section>
+
+        <section class="view" data-view="settings">
+          <div class="section-intro"><div><span class="kicker">WATCHED FOLDERS</span><h2>媒体目录</h2><p>点击“选择媒体目录”，从飞牛文件选择器中授权并添加，无需手写路径。</p></div><button class="button" id="open-manual-root">手动输入路径</button></div>
+          <div id="settings-roots" class="settings-roots"></div>
+          <div class="notice"><strong>关于目录权限</strong><p>媒藏以独立低权限用户运行，只读取你在 fnOS 中明确授权的目录。目录掉线或权限异常时，不会清除原有索引。</p></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="add-root-dialog">
+      <form id="add-root-form">
+        <button type="button" class="dialog-close" aria-label="关闭">×</button>
+        <span class="kicker">ADD LIBRARY ROOT</span>
+        <h2>添加媒体目录</h2>
+        <p>仅在本地开发或选择器不可用时使用。飞牛中建议点击“选择媒体目录”。</p>
+        <label>显示名称<input name="label" placeholder="例如：家庭照片"></label>
+        <label>目录路径<input name="path" required placeholder="/vol1/Media"></label>
+        <div class="dialog-actions"><button type="button" class="button cancel">取消</button><button class="button primary" type="submit">添加并扫描</button></div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

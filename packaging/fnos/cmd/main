@@ -1,0 +1,76 @@
+#!/bin/bash
+
+LOG_FILE="${TRIM_PKGVAR}/meizang.log"
+PID_FILE="${TRIM_PKGVAR}/meizang.pid"
+SOCKET_PATH="${TRIM_APPDEST}/meizang.sock"
+APP_DIR="${TRIM_APPDEST}/server"
+
+export PATH="/var/apps/python312/target/bin:${PATH}"
+
+is_running() {
+    [ -f "${PID_FILE}" ] || return 1
+    pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+    [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null
+}
+
+start_app() {
+    if is_running; then
+        return 0
+    fi
+    mkdir -p "${TRIM_PKGVAR}"
+    rm -f "${PID_FILE}" "${SOCKET_PATH}"
+    cd "${APP_DIR}" || return 1
+    umask 027
+    MEIZANG_DATABASE="${TRIM_PKGVAR}/library.db" \
+    MEIZANG_STATIC="${APP_DIR}/frontend" \
+    MEIZANG_SOCKET="${SOCKET_PATH}" \
+    MEIZANG_PREFIX="/app/meizang" \
+    nohup python3 backend/main.py >> "${LOG_FILE}" 2>&1 &
+    echo "$!" > "${PID_FILE}"
+    count=0
+    while [ "${count}" -lt 150 ]; do
+        if [ -S "${SOCKET_PATH}" ]; then
+            return 0
+        fi
+        if ! is_running; then
+            echo "媒藏启动失败，请查看 ${LOG_FILE}" > "${TRIM_TEMP_LOGFILE}"
+            return 1
+        fi
+        sleep 0.1
+        count=$((count + 1))
+    done
+    echo "媒藏启动超时，请查看 ${LOG_FILE}" > "${TRIM_TEMP_LOGFILE}"
+    stop_app
+    return 1
+}
+
+stop_app() {
+    if ! is_running; then
+        rm -f "${PID_FILE}" "${SOCKET_PATH}"
+        return 0
+    fi
+    pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+    kill -TERM "${pid}" 2>/dev/null || true
+    count=0
+    while kill -0 "${pid}" 2>/dev/null && [ "${count}" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if kill -0 "${pid}" 2>/dev/null; then
+        kill -KILL "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${PID_FILE}" "${SOCKET_PATH}"
+}
+
+case "$1" in
+    start) start_app ;;
+    stop) stop_app ;;
+    status)
+        if is_running; then exit 0; else exit 3; fi
+        ;;
+    restart) stop_app && start_app ;;
+    *)
+        echo "未知操作: $1" > "${TRIM_TEMP_LOGFILE}"
+        exit 1
+        ;;
+esac

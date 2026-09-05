@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "meizang.main": {
+      "title": "媒藏",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/meizang",
+      "gatewaySocket": "meizang.sock",
+      "url": "/app/meizang",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}
