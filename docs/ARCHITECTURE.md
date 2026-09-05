@@ -35,6 +35,8 @@ REST API
 
 TMDB 已作为首个网络 Provider 接入，使用用户自己的 API Token。没有直接复制 Movie Data Capture 的站点爬虫与文件搬运逻辑；后续站点适配仍通过独立、可测试的 Provider 接入，避免 Web 服务与特定站点耦合。
 
+网络 Provider 可使用媒藏自己的 HTTP/HTTPS 代理配置。启用后由 Provider 显式创建代理连接，不修改也不依赖 fnOS 的系统代理；代理 URL 和其中的可选凭据保存在应用私有 SQLite 数据库，设置接口只返回启用与配置状态。
+
 ## 下一阶段
 
 - 后台任务持久化及扫描进度

@@ -14,7 +14,7 @@ from meizang.providers.base import merge_metadata
 from meizang.providers.local import FilenameProvider, NfoProvider
 from meizang.providers.tmdb import TMDBProvider
 from meizang.scanner import media_type, scan_root
-from meizang.server import MeizangApplication
+from meizang.server import MeizangApplication, public_provider_settings, validate_proxy_url
 
 
 class LibraryTests(unittest.TestCase):
@@ -98,10 +98,38 @@ class LibraryTests(unittest.TestCase):
             "tmdb_enabled": "true",
             "tmdb_token": "secret-token",
             "tmdb_language": "zh-CN",
+            "proxy_enabled": "true",
+            "proxy_url": "http://user:password@192.168.1.2:7890",
             "unknown": "ignored",
         })
         self.assertEqual(settings["tmdb_token"], "secret-token")
+        self.assertEqual(settings["proxy_url"], "http://user:password@192.168.1.2:7890")
         self.assertNotIn("unknown", settings)
+        public = public_provider_settings(settings)
+        self.assertTrue(public["proxy"]["configured"])
+        self.assertNotIn("proxy_url", json.dumps(public))
+
+    def test_proxy_url_validation(self):
+        self.assertEqual(validate_proxy_url("http://127.0.0.1:7890"), "http://127.0.0.1:7890")
+        self.assertEqual(validate_proxy_url("https://user:pass@proxy.local:443"), "https://user:pass@proxy.local:443")
+        for value in ("socks5://127.0.0.1:1080", "http://", "http://proxy.local/path", "http://proxy.local:99999"):
+            with self.assertRaises(ValueError):
+                validate_proxy_url(value)
+
+    def test_tmdb_provider_uses_explicit_proxy(self):
+        proxy_url = "http://user:password@proxy.local:7890"
+        with patch("meizang.providers.tmdb.build_opener") as mocked_builder:
+            provider = TMDBProvider("api-key", proxy_url=proxy_url)
+        handler = mocked_builder.call_args.args[0]
+        self.assertEqual(handler.proxies, {"http": proxy_url, "https": proxy_url})
+        self.assertEqual(provider.proxy_url, proxy_url)
+
+    def test_pipeline_passes_enabled_proxy_to_tmdb(self):
+        pipeline = ProviderPipeline.from_settings({
+            "tmdb_enabled": "true", "tmdb_token": "token", "tmdb_language": "zh-CN",
+            "proxy_enabled": "true", "proxy_url": "http://proxy.local:7890",
+        })
+        self.assertEqual(pipeline.providers[-1].proxy_url, "http://proxy.local:7890")
 
     def test_nfo_provider_overrides_filename_metadata(self):
         movie = self.root / "Example.Movie.2024.mkv"

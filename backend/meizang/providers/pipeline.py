@@ -14,7 +14,10 @@ class ProviderPipeline:
     def from_settings(cls, settings: Dict[str, str]):
         providers: List[MetadataProvider] = [FilenameProvider(), FFprobeProvider(), NfoProvider()]
         if settings.get("tmdb_enabled") == "true" and settings.get("tmdb_token"):
-            providers.append(TMDBProvider(settings["tmdb_token"], settings.get("tmdb_language", "zh-CN")))
+            proxy_url = settings.get("proxy_url", "") if settings.get("proxy_enabled") == "true" else ""
+            providers.append(TMDBProvider(
+                settings["tmdb_token"], settings.get("tmdb_language", "zh-CN"), proxy_url=proxy_url,
+            ))
         return cls(providers)
 
     def extract(self, path: Path, media_type: str) -> Metadata:

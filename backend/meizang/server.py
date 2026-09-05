@@ -14,7 +14,36 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__
 from .database import LibraryDatabase
 from .fnos_api import shared_accessible_folders
+from .providers.tmdb import TMDBProvider
 from .scanner import scan_root
+
+
+def validate_proxy_url(proxy_url: str) -> str:
+    value = proxy_url.strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("代理地址必须是有效的 HTTP 或 HTTPS URL")
+    try:
+        parsed.port
+    except ValueError:
+        raise ValueError("代理端口无效")
+    if parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+        raise ValueError("代理地址不能包含路径、查询参数或片段")
+    return value
+
+
+def public_provider_settings(settings: Dict[str, str]) -> Dict[str, Any]:
+    return {
+        "tmdb": {
+            "enabled": settings["tmdb_enabled"] == "true",
+            "configured": bool(settings["tmdb_token"]),
+            "language": settings["tmdb_language"],
+        },
+        "proxy": {
+            "enabled": settings["proxy_enabled"] == "true",
+            "configured": bool(settings["proxy_url"]),
+        },
+    }
 
 
 class ScanJobs:
@@ -133,14 +162,7 @@ def make_handler(application: MeizangApplication):
                     application.refresh_allowed_paths()
                     return self.send_json(200, [str(path) for path in application.allowed_paths])
                 if path == "/api/settings/providers":
-                    settings = application.database.settings()
-                    return self.send_json(200, {
-                        "tmdb": {
-                            "enabled": settings["tmdb_enabled"] == "true",
-                            "configured": bool(settings["tmdb_token"]),
-                            "language": settings["tmdb_language"],
-                        }
-                    })
+                    return self.send_json(200, public_provider_settings(application.database.settings()))
                 if path == "/api/assets":
                     items = application.database.assets(
                         query.get("type", [""])[0], query.get("q", [""])[0],
@@ -165,6 +187,30 @@ def make_handler(application: MeizangApplication):
             try:
                 path, _query = self.route_path()
                 payload = self.body_json()
+                if path == "/api/settings/providers/test":
+                    settings = application.database.settings()
+                    tmdb = payload.get("tmdb", {})
+                    proxy = payload.get("proxy", {})
+                    token = str(tmdb.get("token", "")).strip() or settings["tmdb_token"]
+                    if not token:
+                        raise ValueError("测试连接前请填写 TMDB API Token")
+                    proxy_enabled = proxy.get("enabled") is True
+                    proxy_url = str(proxy.get("url", "")).strip() or settings["proxy_url"]
+                    if proxy_enabled:
+                        proxy_url = validate_proxy_url(proxy_url)
+                    else:
+                        proxy_url = ""
+                    try:
+                        connected = TMDBProvider(
+                            token, str(tmdb.get("language", settings["tmdb_language"])),
+                            timeout=10.0, proxy_url=proxy_url,
+                        ).test_connection()
+                    except Exception as error:
+                        message = str(error).replace(proxy_url, "***") if proxy_url else str(error)
+                        raise ValueError("TMDB 连接失败：{}".format(message))
+                    if not connected:
+                        raise ValueError("TMDB 返回了无效响应")
+                    return self.send_json(200, {"ok": True, "message": "TMDB 连接成功"})
                 if path == "/api/roots":
                     root = application.normalize_root(str(payload.get("path", "")).strip())
                     return self.send_json(201, application.database.add_root(str(root), str(payload.get("label", "")).strip()))
@@ -187,6 +233,7 @@ def make_handler(application: MeizangApplication):
                 if path != "/api/settings/providers":
                     return self.send_json(404, {"error": "接口不存在"})
                 tmdb = payload.get("tmdb", {})
+                proxy = payload.get("proxy", {})
                 language = str(tmdb.get("language", "zh-CN"))
                 if language not in ("zh-CN", "zh-TW", "en-US", "ja-JP"):
                     raise ValueError("不支持的 TMDB 语言")
@@ -203,14 +250,21 @@ def make_handler(application: MeizangApplication):
                 if tmdb.get("clear_token"):
                     updates["tmdb_token"] = ""
                     updates["tmdb_enabled"] = "false"
+                proxy_url = str(proxy.get("url", "")).strip()
+                current_proxy_url = application.database.settings()["proxy_url"]
+                if proxy.get("clear_url"):
+                    proxy_url = ""
+                    current_proxy_url = ""
+                effective_proxy_url = proxy_url or current_proxy_url
+                if proxy.get("enabled") and not effective_proxy_url:
+                    raise ValueError("启用代理前请填写代理地址")
+                if effective_proxy_url:
+                    validate_proxy_url(effective_proxy_url)
+                updates["proxy_enabled"] = "true" if proxy.get("enabled") else "false"
+                if proxy_url or proxy.get("clear_url"):
+                    updates["proxy_url"] = proxy_url
                 settings = application.database.update_settings(updates)
-                return self.send_json(200, {
-                    "tmdb": {
-                        "enabled": settings["tmdb_enabled"] == "true",
-                        "configured": bool(settings["tmdb_token"]),
-                        "language": settings["tmdb_language"],
-                    }
-                })
+                return self.send_json(200, public_provider_settings(settings))
             except (ValueError, OSError) as error:
                 return self.send_json(400, {"error": str(error)})
             except Exception:

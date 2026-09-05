@@ -55,6 +55,8 @@ DEFAULT_SETTINGS = {
     "tmdb_enabled": "false",
     "tmdb_token": "",
     "tmdb_language": "zh-CN",
+    "proxy_enabled": "false",
+    "proxy_url": "",
 }
 
 

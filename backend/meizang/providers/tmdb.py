@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from .base import Metadata, MetadataProvider
 
@@ -12,11 +12,14 @@ class TMDBProvider(MetadataProvider):
     api_base = "https://api.themoviedb.org/3"
     image_base = "https://image.tmdb.org/t/p"
 
-    def __init__(self, token: str, language: str = "zh-CN", timeout: float = 10.0, opener=None):
+    def __init__(self, token: str, language: str = "zh-CN", timeout: float = 10.0, opener=None, proxy_url: str = ""):
         self.token = token.strip()
         self.language = language or "zh-CN"
         self.timeout = timeout
-        self.opener = opener or urlopen
+        self.proxy_url = proxy_url.strip()
+        self.opener = opener or build_opener(ProxyHandler(
+            {"http": self.proxy_url, "https": self.proxy_url} if self.proxy_url else {}
+        )).open
 
     def supports(self, path: Path, media_type: str) -> bool:
         return media_type == "video" and bool(self.token)
@@ -24,7 +27,7 @@ class TMDBProvider(MetadataProvider):
     def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         query = dict(params or {})
         query.setdefault("language", self.language)
-        headers = {"Accept": "application/json", "User-Agent": "Meizang/0.5"}
+        headers = {"Accept": "application/json", "User-Agent": "Meizang/0.5.1"}
         if self.token.startswith("eyJ"):
             headers["Authorization"] = "Bearer {}".format(self.token)
         else:
@@ -35,6 +38,10 @@ class TMDBProvider(MetadataProvider):
             return json.loads(response.read().decode("utf-8"))
         finally:
             response.close()
+
+    def test_connection(self) -> bool:
+        response = self._get("/configuration")
+        return bool(response.get("images"))
 
     def fetch(self, path: Path, media_type: str, current: Metadata) -> Metadata:
         query = str(current.get("search_title") or current.get("title") or path.stem)

@@ -122,27 +122,74 @@ async function startScan(rootId, button, forceMetadata = false) {
 
 async function loadProviderSettings() {
   const settings = await api('/settings/providers');
+  renderProviderSettings(settings);
+}
+
+function renderProviderSettings(settings) {
   $('#tmdb-enabled').checked = settings.tmdb.enabled;
   $('#tmdb-language').value = settings.tmdb.language;
   $('#tmdb-status').textContent = settings.tmdb.configured ? (settings.tmdb.enabled ? '已启用' : '已配置 · 未启用') : '未配置';
   $('#tmdb-status').classList.toggle('active', settings.tmdb.enabled && settings.tmdb.configured);
+  $('#proxy-enabled').checked = settings.proxy.enabled;
+  $('#proxy-status').textContent = settings.proxy.configured ? (settings.proxy.enabled ? '使用中' : '已配置 · 未启用') : '未配置';
+  $('#proxy-status').classList.toggle('active', settings.proxy.enabled && settings.proxy.configured);
+}
+
+function providerPayload() {
+  return {
+    tmdb: {
+      enabled: $('#tmdb-enabled').checked,
+      token: $('#tmdb-token').value.trim(),
+      language: $('#tmdb-language').value,
+    },
+    proxy: {
+      enabled: $('#proxy-enabled').checked,
+      url: $('#proxy-url').value.trim(),
+    },
+  };
 }
 
 $('#provider-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const submit = event.submitter;
+  const submit = event.submitter || $('#provider-form button[type="submit"]');
   submit.disabled = true;
   try {
     const settings = await api('/settings/providers', {
       method: 'PUT',
-      body: JSON.stringify({ tmdb: { enabled: $('#tmdb-enabled').checked, token: $('#tmdb-token').value.trim(), language: $('#tmdb-language').value } }),
+      body: JSON.stringify(providerPayload()),
     });
     $('#tmdb-token').value = '';
-    $('#tmdb-status').textContent = settings.tmdb.configured ? (settings.tmdb.enabled ? '已启用' : '已配置 · 未启用') : '未配置';
-    $('#tmdb-status').classList.toggle('active', settings.tmdb.enabled && settings.tmdb.configured);
+    $('#proxy-url').value = '';
+    renderProviderSettings(settings);
     toast('Provider 设置已保存');
   } catch (error) { toast(error.message, true); }
   finally { submit.disabled = false; }
+});
+
+$('#test-provider-connection').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = '正在测试…';
+  try {
+    const result = await api('/settings/providers/test', {
+      method: 'POST', body: JSON.stringify(providerPayload()),
+    });
+    toast(result.message || 'TMDB 连接成功');
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; button.textContent = original; }
+});
+
+$('#clear-proxy').addEventListener('click', async () => {
+  if (!window.confirm('确定清除媒藏中保存的代理地址吗？')) return;
+  const payload = providerPayload();
+  payload.proxy = { enabled: false, clear_url: true };
+  try {
+    const settings = await api('/settings/providers', { method: 'PUT', body: JSON.stringify(payload) });
+    $('#proxy-url').value = '';
+    renderProviderSettings(settings);
+    toast('已清除代理设置');
+  } catch (error) { toast(error.message, true); }
 });
 
 $('#rescrape-videos').addEventListener('click', async event => {
