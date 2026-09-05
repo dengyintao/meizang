@@ -7,7 +7,8 @@
     <base href="/app/meizang/">
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
-    <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="provider.css?v=0.5.0">
   </head>
   <body>
     <div class="app-shell">
@@ -86,6 +87,18 @@
           <div class="section-intro"><div><span class="kicker">WATCHED FOLDERS</span><h2>媒体目录</h2><p>点击“选择媒体目录”，从飞牛文件选择器中授权并添加，无需手写路径。</p></div><button class="button" id="open-manual-root">手动输入路径</button></div>
           <div id="settings-roots" class="settings-roots"></div>
           <div class="notice"><strong>关于目录权限</strong><p>媒藏以独立低权限用户运行，只读取你在 fnOS 中明确授权的目录。目录掉线或权限异常时，不会清除原有索引。</p></div>
+          <section class="panel provider-panel">
+            <div class="panel-head"><div><span class="kicker">METADATA PROVIDERS</span><h3>影片元数据</h3></div><span id="tmdb-status" class="provider-status">正在读取…</span></div>
+            <form id="provider-form">
+              <label class="switch-row"><span><strong>启用 TMDB Provider</strong><small>根据文件名匹配影片并获取简介、演职员、类型与海报。</small></span><input id="tmdb-enabled" type="checkbox"></label>
+              <div class="provider-fields">
+                <label>API Read Access Token<input id="tmdb-token" type="password" autocomplete="off" placeholder="已配置时可留空"><small>Token 仅保存在媒藏的应用私有数据库中，接口不会回传明文。</small></label>
+                <label>元数据语言<select id="tmdb-language"><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en-US">English</option><option value="ja-JP">日本語</option></select></label>
+              </div>
+              <div class="provider-actions"><button type="button" class="button" id="rescrape-videos">重新刮削全部视频</button><button class="button primary" type="submit">保存 Provider 设置</button></div>
+            </form>
+            <p class="provider-credit">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+          </section>
         </section>
       </main>
     </div>

@@ -24,13 +24,13 @@ class ScanJobs:
         self.root_jobs: Dict[int, str] = {}
         self.lock = threading.Lock()
 
-    def start(self, root_id: int) -> Dict[str, Any]:
+    def start(self, root_id: int, force_metadata: bool = False) -> Dict[str, Any]:
         with self.lock:
             existing_id = self.root_jobs.get(root_id)
             if existing_id and self.jobs.get(existing_id, {}).get("status") == "running":
                 return self.jobs[existing_id]
             job_id = uuid.uuid4().hex
-            job = {"id": job_id, "root_id": root_id, "status": "running", "result": None, "error": ""}
+            job = {"id": job_id, "root_id": root_id, "status": "running", "force_metadata": force_metadata, "result": None, "error": ""}
             self.jobs[job_id] = job
             self.root_jobs[root_id] = job_id
         threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
@@ -39,7 +39,7 @@ class ScanJobs:
     def _run(self, job_id: str) -> None:
         job = self.jobs[job_id]
         try:
-            result = scan_root(self.database, job["root_id"])
+            result = scan_root(self.database, job["root_id"], job.get("force_metadata", False))
             with self.lock:
                 job.update(status="completed", result=result)
         except Exception as error:
@@ -132,6 +132,15 @@ def make_handler(application: MeizangApplication):
                 if path == "/api/authorized-paths":
                     application.refresh_allowed_paths()
                     return self.send_json(200, [str(path) for path in application.allowed_paths])
+                if path == "/api/settings/providers":
+                    settings = application.database.settings()
+                    return self.send_json(200, {
+                        "tmdb": {
+                            "enabled": settings["tmdb_enabled"] == "true",
+                            "configured": bool(settings["tmdb_token"]),
+                            "language": settings["tmdb_language"],
+                        }
+                    })
                 if path == "/api/assets":
                     items = application.database.assets(
                         query.get("type", [""])[0], query.get("q", [""])[0],
@@ -163,8 +172,45 @@ def make_handler(application: MeizangApplication):
                     root_id = int(payload.get("root_id", 0))
                     if not application.database.root(root_id):
                         return self.send_json(404, {"error": "媒体目录不存在"})
-                    return self.send_json(202, application.jobs.start(root_id))
+                    return self.send_json(202, application.jobs.start(root_id, payload.get("force_metadata") is True))
                 return self.send_json(404, {"error": "接口不存在"})
+            except (ValueError, OSError) as error:
+                return self.send_json(400, {"error": str(error)})
+            except Exception:
+                traceback.print_exc()
+                return self.send_json(500, {"error": "服务器内部错误"})
+
+        def do_PUT(self):
+            try:
+                path, _query = self.route_path()
+                payload = self.body_json()
+                if path != "/api/settings/providers":
+                    return self.send_json(404, {"error": "接口不存在"})
+                tmdb = payload.get("tmdb", {})
+                language = str(tmdb.get("language", "zh-CN"))
+                if language not in ("zh-CN", "zh-TW", "en-US", "ja-JP"):
+                    raise ValueError("不支持的 TMDB 语言")
+                updates = {
+                    "tmdb_enabled": "true" if tmdb.get("enabled") else "false",
+                    "tmdb_language": language,
+                }
+                token = str(tmdb.get("token", "")).strip()
+                current_token = application.database.settings()["tmdb_token"]
+                if tmdb.get("enabled") and not (token or current_token):
+                    raise ValueError("启用 TMDB 前请填写 API Token")
+                if token:
+                    updates["tmdb_token"] = token
+                if tmdb.get("clear_token"):
+                    updates["tmdb_token"] = ""
+                    updates["tmdb_enabled"] = "false"
+                settings = application.database.update_settings(updates)
+                return self.send_json(200, {
+                    "tmdb": {
+                        "enabled": settings["tmdb_enabled"] == "true",
+                        "configured": bool(settings["tmdb_token"]),
+                        "language": settings["tmdb_language"],
+                    }
+                })
             except (ValueError, OSError) as error:
                 return self.send_json(400, {"error": str(error)})
             except Exception:

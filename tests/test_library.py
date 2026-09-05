@@ -1,13 +1,18 @@
+import json
 import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from meizang.database import LibraryDatabase
+from meizang.providers import ProviderPipeline
+from meizang.providers.base import merge_metadata
+from meizang.providers.local import FilenameProvider, NfoProvider
+from meizang.providers.tmdb import TMDBProvider
 from meizang.scanner import media_type, scan_root
 from meizang.server import MeizangApplication
 
@@ -87,6 +92,96 @@ class LibraryTests(unittest.TestCase):
         with patch("meizang.server.shared_accessible_folders", return_value=[str(self.root)]):
             with patch.dict(os.environ, {"TRIM_API_TOKEN": "test-token"}):
                 self.assertEqual(app.normalize_root(str(self.root)), self.root.resolve())
+
+    def test_provider_settings_are_persisted(self):
+        settings = self.database.update_settings({
+            "tmdb_enabled": "true",
+            "tmdb_token": "secret-token",
+            "tmdb_language": "zh-CN",
+            "unknown": "ignored",
+        })
+        self.assertEqual(settings["tmdb_token"], "secret-token")
+        self.assertNotIn("unknown", settings)
+
+    def test_nfo_provider_overrides_filename_metadata(self):
+        movie = self.root / "Example.Movie.2024.mkv"
+        movie.write_bytes(b"video")
+        movie.with_suffix(".nfo").write_text(
+            "<movie><title>示例电影</title><year>2024</year><genre>剧情</genre>"
+            "<actor><name>演员甲</name><role>主角</role></actor>"
+            "<uniqueid type='tmdb'>123</uniqueid></movie>",
+            encoding="utf-8",
+        )
+        metadata = ProviderPipeline([FilenameProvider(), NfoProvider()]).extract(movie, "video")
+        self.assertEqual(metadata["title"], "示例电影")
+        self.assertEqual(metadata["genres"], ["剧情"])
+        self.assertEqual(metadata["cast"][0]["name"], "演员甲")
+        self.assertEqual(metadata["provider"], "nfo")
+
+    def test_provider_merge_supports_object_lists(self):
+        merged = merge_metadata(
+            {"cast": [{"name": "演员甲"}]},
+            {"cast": [{"name": "演员甲"}, {"name": "演员乙"}]},
+            "test",
+        )
+        self.assertEqual([item["name"] for item in merged["cast"]], ["演员甲", "演员乙"])
+
+    def test_tmdb_provider_maps_search_and_details(self):
+        responses = iter([
+            {"results": [{"id": 123}]},
+            {
+                "id": 123,
+                "title": "示例电影",
+                "original_title": "Example Movie",
+                "release_date": "2024-03-01",
+                "overview": "一段简介",
+                "runtime": 118,
+                "vote_average": 8.2,
+                "vote_count": 42,
+                "genres": [{"name": "剧情"}],
+                "poster_path": "/poster.jpg",
+                "credits": {
+                    "crew": [{"job": "Director", "name": "导演甲"}],
+                    "cast": [{"name": "演员甲", "character": "主角"}],
+                },
+                "videos": {"results": [{"site": "YouTube", "type": "Trailer", "key": "abc"}]},
+            },
+        ])
+        requested_urls = []
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+            def close(self):
+                pass
+
+        def opener(request, timeout):
+            requested_urls.append(request.full_url)
+            return Response(next(responses))
+
+        provider = TMDBProvider("api-key", opener=opener)
+        metadata = provider.fetch(Path("Example.Movie.2024.mkv"), "video", {"title": "Example Movie", "year": 2024})
+        self.assertEqual(metadata["title"], "示例电影")
+        self.assertEqual(metadata["director"], "导演甲")
+        self.assertEqual(metadata["poster_url"], "https://image.tmdb.org/t/p/w500/poster.jpg")
+        self.assertIn("api_key=api-key", requested_urls[0])
+
+    def test_force_metadata_scan_updates_unchanged_video(self):
+        movie = self.root / "Movie.2024.mkv"
+        movie.write_bytes(b"video")
+        scan_root(self.database, self.root_record["id"])
+        refreshed = {
+            "title": "刷新后的标题", "year": 2024, "duration": 100.0,
+            "width": 1920, "height": 1080, "codec": "h264", "provider": "test",
+        }
+        with patch("meizang.scanner.extract_metadata", return_value=refreshed):
+            result = scan_root(self.database, self.root_record["id"], force_metadata=True)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(self.database.assets("video")[0]["title"], "刷新后的标题")
 
 
 if __name__ == "__main__":

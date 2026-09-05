@@ -43,7 +43,19 @@ CREATE TABLE IF NOT EXISTS media_assets (
 CREATE INDEX IF NOT EXISTS idx_assets_type ON media_assets(media_type);
 CREATE INDEX IF NOT EXISTS idx_assets_hash ON media_assets(size, sha256);
 CREATE INDEX IF NOT EXISTS idx_assets_root ON media_assets(root_id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
+
+DEFAULT_SETTINGS = {
+    "tmdb_enabled": "false",
+    "tmdb_token": "",
+    "tmdb_language": "zh-CN",
+}
 
 
 class LibraryDatabase:
@@ -80,6 +92,26 @@ class LibraryDatabase:
                 "SELECT * FROM library_roots WHERE path = ?", (path,)
             ).fetchone()
             return dict(row)
+
+    def settings(self) -> Dict[str, str]:
+        values = dict(DEFAULT_SETTINGS)
+        with self.connect() as connection:
+            rows = connection.execute("SELECT key, value FROM app_settings").fetchall()
+        values.update({row["key"]: row["value"] for row in rows})
+        return values
+
+    def update_settings(self, values: Dict[str, str]) -> Dict[str, str]:
+        allowed = set(DEFAULT_SETTINGS)
+        with self.connect() as connection:
+            for key, value in values.items():
+                if key not in allowed:
+                    continue
+                connection.execute(
+                    "INSERT INTO app_settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+                    (key, str(value)),
+                )
+        return self.settings()
 
     def roots(self) -> List[Dict[str, Any]]:
         with self.connect() as connection:
@@ -171,4 +203,3 @@ class LibraryDatabase:
                     "files": [dict(row) for row in files],
                 })
             return result
-

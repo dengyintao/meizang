@@ -33,7 +33,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def scan_root(database: LibraryDatabase, root_id: int) -> Dict[str, int]:
+def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = False) -> Dict[str, int]:
     root = database.root(root_id)
     if not root:
         raise ValueError("媒体目录不存在")
@@ -50,12 +50,13 @@ def scan_root(database: LibraryDatabase, root_id: int) -> Dict[str, int]:
     token = uuid.uuid4().hex
     counters = {"inserted": 0, "updated": 0, "unchanged": 0, "removed": 0, "failed": 0}
     traversal_complete = True
+    provider_settings = database.settings()
 
     with database.connect() as connection:
         existing = {
             row["path"]: row
             for row in connection.execute(
-                "SELECT id, path, size, mtime_ns FROM media_assets WHERE root_id=?", (root_id,)
+                "SELECT id, path, size, mtime_ns, media_type FROM media_assets WHERE root_id=?", (root_id,)
             )
         }
 
@@ -76,18 +77,26 @@ def scan_root(database: LibraryDatabase, root_id: int) -> Dict[str, int]:
                 try:
                     stat = path.stat()
                     old = existing.get(str(path))
-                    if old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns:
+                    unchanged = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
+                    if unchanged and not (force_metadata and kind == "video"):
                         connection.execute("UPDATE media_assets SET scan_token=? WHERE id=?", (token, old["id"]))
                         counters["unchanged"] += 1
                         continue
-                    metadata = extract_metadata(path, kind)
+                    metadata = extract_metadata(path, kind, provider_settings)
+                    if unchanged:
+                        connection.execute(
+                            "UPDATE media_assets SET title=?,year=?,duration=?,width=?,height=?,codec=?,metadata_json=?,scan_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (metadata["title"], metadata["year"], metadata["duration"], metadata["width"], metadata["height"], metadata["codec"], json.dumps(metadata, ensure_ascii=False), token, old["id"]),
+                        )
+                        counters["updated"] += 1
+                        continue
                     digest = sha256_file(path)
                     relative = str(path.relative_to(root_path))
                     values = (
                         root_id, str(path), relative, filename, path.suffix.lower(), kind,
                         stat.st_size, stat.st_mtime_ns, digest, metadata["title"], metadata["year"],
                         metadata["duration"], metadata["width"], metadata["height"], metadata["codec"],
-                        json.dumps(metadata["raw"], ensure_ascii=False), token,
+                        json.dumps(metadata, ensure_ascii=False), token,
                     )
                     connection.execute(
                         "INSERT INTO media_assets(root_id,path,relative_path,filename,extension,media_type,size,mtime_ns,sha256,title,year,duration,width,height,codec,metadata_json,scan_token) "

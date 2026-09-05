@@ -1,0 +1,111 @@
+.asset-preview {
+  height: 170px;
+  position: relative;
+  overflow: hidden;
+}
+
+.asset-preview img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.provider-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 9px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(12, 18, 24, 0.76);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(8px);
+}
+
+.provider-panel { margin-top: 20px; }
+
+.provider-status {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.provider-status.active {
+  border-color: rgba(55, 201, 145, 0.38);
+  background: rgba(55, 201, 145, 0.12);
+  color: #197450;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.switch-row label { font-weight: 750; }
+.switch-row input { width: 20px; height: 20px; accent-color: var(--teal); }
+.switch-row > span { display: grid; gap: 4px; }
+.switch-row small,
+.provider-fields small { color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.5; }
+
+.switch-row p,
+.provider-credit {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.provider-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.provider-fields label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.provider-fields input,
+.provider-fields select {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.provider-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.provider-credit {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 620px) {
+  .asset-preview { height: 120px; }
+  .provider-fields { grid-template-columns: 1fr; }
+  .provider-actions { align-items: stretch; flex-direction: column; }
+  .provider-actions .button { width: 100%; }
+}

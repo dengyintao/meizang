@@ -35,6 +35,13 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
 }
 
+function safeImageUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? escapeHtml(url.href) : '';
+  } catch (_error) { return ''; }
+}
+
 async function loadHealth() {
   try {
     const health = await api('/health');
@@ -78,8 +85,12 @@ async function loadAssets() {
     return;
   }
   const icons = { image: '▧', video: '▶', audio: '♫', other: '◇' };
-  grid.innerHTML = assets.map(asset => `
-    <article class="asset-card"><div class="asset-preview">${icons[asset.media_type] || '◇'}</div><div class="asset-card-body"><strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.title || asset.filename)}</strong><p title="${escapeHtml(asset.relative_path)}">${escapeHtml(asset.relative_path)}</p><div class="asset-meta"><span>${escapeHtml(asset.extension.replace('.', '').toUpperCase())}${asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span><span>${formatBytes(asset.size)}</span></div></div></article>`).join('');
+  grid.innerHTML = assets.map(asset => {
+    const metadata = asset.metadata || {};
+    const poster = safeImageUrl(metadata.poster_url);
+    const details = [asset.year, metadata.genres?.slice(0, 2).join(' / ')].filter(Boolean).join(' · ');
+    return `<article class="asset-card"><div class="asset-preview">${poster ? `<img src="${poster}" loading="lazy" alt="">` : icons[asset.media_type] || '◇'}${metadata.provider ? `<span class="provider-badge">${escapeHtml(metadata.provider.toUpperCase())}</span>` : ''}</div><div class="asset-card-body"><strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.title || asset.filename)}</strong><p title="${escapeHtml(metadata.plot || asset.relative_path)}">${escapeHtml(details || asset.relative_path)}</p><div class="asset-meta"><span>${escapeHtml(asset.extension.replace('.', '').toUpperCase())}${asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span><span>${formatBytes(asset.size)}</span></div></div></article>`;
+  }).join('');
 }
 
 async function loadDuplicates() {
@@ -91,21 +102,65 @@ async function loadDuplicates() {
     <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${index + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map(file => `<div class="duplicate-file">${escapeHtml(file.path)}</div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
 }
 
-async function startScan(rootId, button) {
+async function startScan(rootId, button, forceMetadata = false) {
   const original = button?.textContent;
   if (button) { button.disabled = true; button.textContent = '扫描中…'; }
   try {
-    const job = await api('/scans', { method: 'POST', body: JSON.stringify({ root_id: rootId }) });
+    const job = await api('/scans', { method: 'POST', body: JSON.stringify({ root_id: rootId, force_metadata: forceMetadata }) });
     await pollScan(job.id);
     toast('媒体目录扫描完成');
     await Promise.all([loadStats(), loadRoots()]);
     if (location.hash === '#library') await loadAssets();
+    return true;
   } catch (error) {
     toast(error.message, true);
+    return false;
   } finally {
     if (button) { button.disabled = false; button.textContent = original; }
   }
 }
+
+async function loadProviderSettings() {
+  const settings = await api('/settings/providers');
+  $('#tmdb-enabled').checked = settings.tmdb.enabled;
+  $('#tmdb-language').value = settings.tmdb.language;
+  $('#tmdb-status').textContent = settings.tmdb.configured ? (settings.tmdb.enabled ? '已启用' : '已配置 · 未启用') : '未配置';
+  $('#tmdb-status').classList.toggle('active', settings.tmdb.enabled && settings.tmdb.configured);
+}
+
+$('#provider-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = event.submitter;
+  submit.disabled = true;
+  try {
+    const settings = await api('/settings/providers', {
+      method: 'PUT',
+      body: JSON.stringify({ tmdb: { enabled: $('#tmdb-enabled').checked, token: $('#tmdb-token').value.trim(), language: $('#tmdb-language').value } }),
+    });
+    $('#tmdb-token').value = '';
+    $('#tmdb-status').textContent = settings.tmdb.configured ? (settings.tmdb.enabled ? '已启用' : '已配置 · 未启用') : '未配置';
+    $('#tmdb-status').classList.toggle('active', settings.tmdb.enabled && settings.tmdb.configured);
+    toast('Provider 设置已保存');
+  } catch (error) { toast(error.message, true); }
+  finally { submit.disabled = false; }
+});
+
+$('#rescrape-videos').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  if (!state.roots.length) {
+    toast('请先添加媒体目录', true);
+    return;
+  }
+  button.disabled = true;
+  button.textContent = '重新刮削中…';
+  try {
+    for (const root of state.roots) {
+      if (!await startScan(root.id, null, true)) throw new Error('部分目录重新刮削失败');
+    }
+    toast('全部视频元数据已重新刮削');
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; button.textContent = '重新刮削全部视频'; }
+});
 
 async function pollScan(jobId) {
   for (;;) {
@@ -222,5 +277,5 @@ window.addEventListener('message', event => {
   addSelectedRoots(result?.path || result?.data || []).catch(error => toast(error.message, true));
 });
 
-Promise.all([loadHealth(), loadStats(), loadRoots()]).catch(error => toast(error.message, true));
+Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings()]).catch(error => toast(error.message, true));
 route();
