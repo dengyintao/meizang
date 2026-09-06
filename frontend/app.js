@@ -251,6 +251,7 @@ async function addSelectedRoots(paths) {
 }
 
 async function chooseRoot() {
+  sessionStorage.removeItem('meizang-picker-target');
   const button = $('#open-add-root');
   if (isLocalDevelopment) {
     dialog.showModal();
@@ -321,8 +322,101 @@ window.addEventListener('message', event => {
     toast(result?.error || '目录授权未完成', true);
     return;
   }
-  addSelectedRoots(result?.path || result?.data || []).catch(error => toast(error.message, true));
+  const pickerTarget = sessionStorage.getItem('meizang-picker-target');
+  sessionStorage.removeItem('meizang-picker-target');
+  const paths = result?.path || result?.data || [];
+  if (['qb-library-root', 'qb-local-prefix'].includes(pickerTarget)) {
+    const path = Array.isArray(paths) ? paths[0] : paths;
+    if (path) $(`#${pickerTarget}`).value = path;
+    return;
+  }
+  addSelectedRoots(paths).catch(error => toast(error.message, true));
 });
 
-Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings()]).catch(error => toast(error.message, true));
+function qbPayload() {
+  const payload = {};
+  for (const key of ['url', 'username', 'password', 'category', 'library_root', 'remote_prefix', 'local_prefix', 'poll_seconds']) {
+    payload[key] = $(`#qb-${key.replaceAll('_', '-')}`).value;
+  }
+  payload.enabled = $('#qb-enabled').checked;
+  payload.auto_cleanup = $('#qb-auto-cleanup').checked;
+  return payload;
+}
+
+async function loadQBSettings() {
+  const data = await api('/settings/qbittorrent');
+  for (const key of ['url', 'username', 'category', 'library_root', 'remote_prefix', 'local_prefix', 'poll_seconds']) {
+    $(`#qb-${key.replaceAll('_', '-')}`).value = data[key];
+  }
+  $('#qb-enabled').checked = data.enabled;
+  $('#qb-auto-cleanup').checked = data.auto_cleanup;
+  $('#qb-password').placeholder = data.password_configured ? '已保存，留空保持' : '填写 WebUI 密码';
+  $('#qb-status').textContent = data.enabled ? '已启用' : '未启用';
+  $('#qb-links-active').textContent = data.links.active;
+  $('#qb-links-conflict').textContent = data.links.conflict;
+  $('#qb-last-sync').textContent = data.last_sync_at ? `${data.last_sync_at} · ${data.last_sync_message}` : '尚未同步';
+  const links = await api('/qbittorrent/links');
+  $('#qb-link-list').innerHTML = links.length ? links.map(link => `<p style="overflow-wrap:anywhere">${escapeHtml(link.source_path)} → ${escapeHtml(link.library_path)}<br>${escapeHtml(link.status)} · ${escapeHtml(link.message)}</p>`).join('') : '<p>尚无整理记录。</p>';
+}
+
+$('#qb-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await api('/settings/qbittorrent', {method: 'PUT', body: JSON.stringify(qbPayload())});
+    $('#qb-password').value = '';
+    await loadQBSettings();
+    toast('qB 设置已保存');
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
+
+for (const action of ['test', 'sync']) {
+  $(`#qb-${action}`).addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api(`/qbittorrent/${action}`, {method: 'POST', body: JSON.stringify(action === 'test' ? qbPayload() : {})});
+      if (action === 'test') toast(`连接成功 · ${result.version} · ${result.torrents} 个任务`);
+      else {
+        await loadQBSettings();
+        toast(`整理 ${result.organized.created} 个文件，失败 ${result.organized.failed} 个，清理 ${result.cleanup.removed} 个链接`, result.organized.failed > 0);
+      }
+    } catch (error) { toast(error.message, true); }
+    finally { button.disabled = false; }
+  });
+}
+
+$$('.path-picker').forEach(button => button.addEventListener('click', async () => {
+  const target = button.dataset.target;
+  try {
+    if (isLocalDevelopment) {
+      const paths = await api('/roots');
+      const picker = document.createElement('dialog');
+      picker.innerHTML = `<h3>选择已添加的目录</h3><p>也可关闭后直接填写路径。</p>${paths.map(root => `<p><button class="button" data-path="${escapeHtml(root.path)}">${escapeHtml(root.path)}</button></p>`).join('')}<button class="button" data-close>关闭</button>`;
+      document.body.append(picker);
+      picker.addEventListener('click', event => {
+        if (event.target.dataset.path) { $(`#${target}`).value = event.target.dataset.path; picker.close(); }
+        if (event.target.hasAttribute('data-close')) picker.close();
+      });
+      picker.addEventListener('close', () => picker.remove());
+      picker.showModal();
+      return;
+    }
+    await trimSdk.ready();
+    if (!trimSdk.isStandaloneWeb) {
+      const result = await trimSdk.pickSharedFile({title:'选择整理目录', okText:'授权并选择', sidebarGroup:['myFiles','otherShare','external']});
+      if (result?.code !== 0) throw new Error(result?.msg || '选择已取消');
+      if (result.data?.length) $(`#${target}`).value = result.data[0];
+    } else {
+      sessionStorage.setItem('meizang-picker-target', target);
+      const authState = crypto.randomUUID();
+      sessionStorage.setItem('meizang-auth-state', authState);
+      await trimSdk.openAppAuth('pickSharedFile', {appName:'meizang', redirectUri:`${location.origin}${PREFIX}/callback.html`, state:authState}, {target:'_blank'});
+    }
+  } catch (error) { toast(error.message, true); }
+}));
+
+Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]).catch(error => toast(error.message, true));
 route();

@@ -7,14 +7,16 @@ import threading
 import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .database import LibraryDatabase
 from .fnos_api import shared_accessible_folders
+from .organizer import QBIntegration
 from .providers.tmdb import TMDBProvider
+from .qbittorrent import validate_qb_url
 from .scanner import scan_root
 
 
@@ -43,6 +45,102 @@ def public_provider_settings(settings: Dict[str, str]) -> Dict[str, Any]:
             "enabled": settings["proxy_enabled"] == "true",
             "configured": bool(settings["proxy_url"]),
         },
+    }
+
+
+def public_qb_settings(settings: Dict[str, str], stats: Dict[str, int]) -> Dict[str, Any]:
+    return {
+        "enabled": settings["qb_enabled"] == "true",
+        "url": settings["qb_url"],
+        "username": settings["qb_username"],
+        "password_configured": bool(settings["qb_password"]),
+        "category": settings["qb_category"],
+        "library_root": settings["qb_library_root"],
+        "remote_prefix": settings["qb_remote_prefix"],
+        "local_prefix": settings["qb_local_prefix"],
+        "auto_cleanup": settings["qb_auto_cleanup"] == "true",
+        "poll_seconds": int(settings["qb_poll_seconds"]),
+        "last_sync_at": settings["qb_last_sync_at"],
+        "last_sync_status": settings["qb_last_sync_status"],
+        "last_sync_message": settings["qb_last_sync_message"],
+        "links": stats,
+    }
+
+
+def effective_qb_settings(current: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, str]:
+    values = dict(current)
+    mapping = {
+        "url": "qb_url",
+        "username": "qb_username",
+        "category": "qb_category",
+        "library_root": "qb_library_root",
+        "remote_prefix": "qb_remote_prefix",
+        "local_prefix": "qb_local_prefix",
+    }
+    for incoming, stored in mapping.items():
+        if incoming in payload:
+            values[stored] = str(payload.get(incoming, "")).strip()
+    if str(payload.get("password", "")):
+        values["qb_password"] = str(payload["password"])
+    if payload.get("clear_password"):
+        values["qb_password"] = ""
+    if "enabled" in payload:
+        values["qb_enabled"] = "true" if payload.get("enabled") else "false"
+    if "auto_cleanup" in payload:
+        values["qb_auto_cleanup"] = "true" if payload.get("auto_cleanup") else "false"
+    if "poll_seconds" in payload:
+        values["qb_poll_seconds"] = str(payload["poll_seconds"])
+    return values
+
+
+def validate_qb_connection_settings(settings: Dict[str, str]) -> None:
+    validate_qb_url(settings["qb_url"])
+
+
+def validate_qb_settings(application, settings: Dict[str, str]) -> Dict[str, str]:
+    validate_qb_connection_settings(settings)
+    category = settings["qb_category"].strip()
+    if not category or len(category) > 80:
+        raise ValueError("请填写长度不超过 80 个字符的 qB 分类")
+    try:
+        interval = int(settings["qb_poll_seconds"])
+    except (TypeError, ValueError):
+        raise ValueError("同步间隔必须是整数")
+    if interval < 30 or interval > 3600:
+        raise ValueError("同步间隔必须在 30 到 3600 秒之间")
+
+    library_root = settings["qb_library_root"].strip()
+    if settings["qb_enabled"] == "true" and not library_root:
+        raise ValueError("启用 qB 集成前请选择真实媒体库目录")
+    if library_root:
+        library_root = str(application.normalize_writable_directory(library_root))
+
+    remote_prefix = settings["qb_remote_prefix"].strip()
+    local_prefix = settings["qb_local_prefix"].strip()
+    if bool(remote_prefix) != bool(local_prefix):
+        raise ValueError("qB 路径映射的远端和本地前缀必须同时填写")
+    if remote_prefix and not PurePosixPath(remote_prefix).is_absolute():
+        raise ValueError("qB 远端路径前缀必须是绝对路径")
+    if local_prefix:
+        local_prefix = str(application.normalize_writable_directory(local_prefix))
+        if library_root and Path(local_prefix) not in Path(library_root).parents:
+            raise ValueError('路径映射时媒体库也须位于同一本地挂载前缀内，确保 qB 可以读取软链接')
+    current = application.database.settings()
+    if application.database.managed_links():
+        for key, value in [('qb_url', settings['qb_url']), ('qb_username', settings['qb_username']), ('qb_library_root', library_root), ('qb_remote_prefix', remote_prefix), ('qb_local_prefix', local_prefix)]:
+            if current[key] != value:
+                raise ValueError('已有整理台账，请保持 qB 实例、账号及目录映射不变')
+
+    return {
+        "qb_enabled": settings["qb_enabled"],
+        "qb_url": validate_qb_url(settings["qb_url"]),
+        "qb_username": settings["qb_username"],
+        "qb_category": category,
+        "qb_library_root": library_root,
+        "qb_remote_prefix": remote_prefix,
+        "qb_local_prefix": local_prefix,
+        "qb_auto_cleanup": settings["qb_auto_cleanup"],
+        "qb_poll_seconds": str(interval),
     }
 
 
@@ -92,6 +190,7 @@ class MeizangApplication:
         self.enforce_allowed_paths = "TRIM_DATA_ACCESSIBLE_PATHS" in os.environ or bool(
             os.environ.get("TRIM_API_TOKEN", "").strip()
         )
+        self.qb = QBIntegration(self.database, self.is_authorized_path)
 
     def refresh_allowed_paths(self) -> None:
         if not os.environ.get("TRIM_API_TOKEN", "").strip():
@@ -114,6 +213,18 @@ class MeizangApplication:
             raise ValueError("目录不存在")
         if not os.access(str(path), os.R_OK):
             raise ValueError("目录没有读取权限")
+        return path
+
+    def is_authorized_path(self, path: Path) -> bool:
+        candidate = path.parent.resolve() / path.name
+        return not (self.enforce_allowed_paths or self.allowed_paths) or any(
+            candidate == root or root in candidate.parents for root in self.allowed_paths
+        )
+
+    def normalize_writable_directory(self, raw_path: str) -> Path:
+        path = self.normalize_root(raw_path)
+        if not os.access(str(path), os.W_OK):
+            raise ValueError("目录没有写入权限")
         return path
 
 
@@ -163,12 +274,18 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(200, [str(path) for path in application.allowed_paths])
                 if path == "/api/settings/providers":
                     return self.send_json(200, public_provider_settings(application.database.settings()))
+                if path == "/api/settings/qbittorrent":
+                    return self.send_json(200, public_qb_settings(
+                        application.database.settings(), application.database.managed_link_stats(),
+                    ))
                 if path == "/api/assets":
                     items = application.database.assets(
                         query.get("type", [""])[0], query.get("q", [""])[0],
                         int(query.get("limit", ["200"])[0]),
                     )
                     return self.send_json(200, items)
+                if path == '/api/qbittorrent/links':
+                    return self.send_json(200, [{key: row[key] for key in ('source_path', 'library_path', 'status', 'message')} for row in application.database.managed_links()[:100]])
                 if path == "/api/duplicates":
                     return self.send_json(200, application.database.duplicates())
                 if path.startswith("/api/scans/"):
@@ -211,6 +328,14 @@ def make_handler(application: MeizangApplication):
                     if not connected:
                         raise ValueError("TMDB 返回了无效响应")
                     return self.send_json(200, {"ok": True, "message": "TMDB 连接成功"})
+                if path == "/api/qbittorrent/test":
+                    settings = effective_qb_settings(application.database.settings(), payload)
+                    validate_qb_connection_settings(settings)
+                    result = application.qb.test_connection(settings)
+                    return self.send_json(200, result)
+                if path == "/api/qbittorrent/sync":
+                    application.refresh_allowed_paths()
+                    return self.send_json(200, application.qb.sync_once())
                 if path == "/api/roots":
                     root = application.normalize_root(str(payload.get("path", "")).strip())
                     return self.send_json(201, application.database.add_root(str(root), str(payload.get("label", "")).strip()))
@@ -230,6 +355,16 @@ def make_handler(application: MeizangApplication):
             try:
                 path, _query = self.route_path()
                 payload = self.body_json()
+                if path == "/api/settings/qbittorrent":
+                    current = application.database.settings()
+                    settings = effective_qb_settings(current, payload)
+                    updates = validate_qb_settings(application, settings)
+                    if payload.get("password"):
+                        updates["qb_password"] = str(payload["password"])
+                    if payload.get("clear_password"):
+                        updates["qb_password"] = ""
+                    saved = application.database.update_settings(updates)
+                    return self.send_json(200, public_qb_settings(saved, application.database.managed_link_stats()))
                 if path != "/api/settings/providers":
                     return self.send_json(404, {"error": "接口不存在"})
                 tmdb = payload.get("tmdb", {})
@@ -311,9 +446,11 @@ def serve(database_path: str, static_dir: str, host: str, port: int, socket_path
     else:
         server = ThreadingHTTPServer((host, port), handler)
         print("媒藏 listening on http://{}:{}{}".format(host, port, prefix), flush=True)
+    application.qb.start()
     try:
         server.serve_forever()
     finally:
+        application.qb.stop()
         server.server_close()
         if socket_path:
             try:

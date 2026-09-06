@@ -8,7 +8,7 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.5.1">
+  <link rel="stylesheet" href="provider.css?v=0.6.0">
   </head>
   <body>
     <div class="app-shell">
@@ -107,6 +107,39 @@
             </form>
             <p class="provider-credit">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
           </section>
+          <section class="panel provider-panel qb-panel">
+            <div class="panel-head"><div><span class="kicker">QBITTORRENT SEEDING</span><h3>qB 做种兼容整理</h3></div><span id="qb-status" class="provider-status">正在读取…</span></div>
+            <form id="qb-form">
+              <label class="switch-row"><span><strong>启用 qBittorrent 集成</strong><small>仅处理指定分类中已经下载完成的任务。</small></span><input id="qb-enabled" type="checkbox"></label>
+              <div class="provider-fields qb-connection-fields">
+                <label>WebUI 地址<input id="qb-url" type="url" placeholder="http://127.0.0.1:8080"></label>
+                <label>用户名<input id="qb-username" autocomplete="username" placeholder="admin"></label>
+                <label>密码<input id="qb-password" type="password" autocomplete="current-password" placeholder="已配置时可留空"><small>密码不会由设置接口回传。</small></label>
+                <label>专用分类<input id="qb-category" placeholder="meizang"><small>只有该分类的已完成任务会被整理。</small></label>
+              </div>
+              <div class="path-setting">
+                <label>真实媒体库目录<input id="qb-library-root" placeholder="例如：/vol1/影视/电影"></label>
+                <button type="button" class="button path-picker" data-target="qb-library-root">选择目录</button>
+                <small>真实原始文件将移动到这里；必须与下载目录位于同一文件系统。</small>
+              </div>
+              <details class="mapping-settings">
+                <summary>Docker 路径映射（可选）</summary>
+                <p>如果 qB 返回的容器路径与 fnOS 路径不同，请同时填写下面两项。</p>
+                <div class="provider-fields">
+                  <label>qB 远端路径前缀<input id="qb-remote-prefix" placeholder="例如：/downloads"></label>
+                  <label>fnOS 本地路径前缀<input id="qb-local-prefix" placeholder="例如：/vol1/下载"><button type="button" class="text-button path-picker" data-target="qb-local-prefix">选择目录</button></label>
+                </div>
+              </details>
+              <div class="qb-options">
+                <label class="switch-row"><span><strong>任务移除后自动清理软链接</strong><small>只清理台账中指向真实媒体库文件的 qB 侧软链接。</small></span><input id="qb-auto-cleanup" type="checkbox"></label>
+                <label>自动同步间隔<select id="qb-poll-seconds"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
+              </div>
+              <div class="qb-safety"><strong>整理与做种</strong><p>真实影片保存在媒体库，下载位置保留软链接。按任务名称归档，保留原文件名；音乐暂不参与。仅限同一文件系统，暂停确认后才进行无复制迁移，已停止的任务保持停止。</p><p>容器运行 qB 时，下载目录和媒体库须位于同一个挂载前缀内，并保证 qB 对媒体库有读取权限。在 qB 移除任务时请选择保留文件；媒藏无法控制 qB 或其他软件直接删除数据的行为。</p></div>
+              <div class="qb-link-stats"><span><strong id="qb-links-active">0</strong> 个有效链接</span><span><strong id="qb-links-conflict">0</strong> 个待处理冲突</span><span id="qb-last-sync">尚未同步</span></div>
+              <details><summary>整理记录（最近 100 条）</summary><div id="qb-link-list"></div></details>
+              <div class="provider-actions qb-actions"><div><button type="button" class="button" id="qb-test">测试连接</button><button type="button" class="button" id="qb-sync">立即整理与清理</button></div><button class="button primary" type="submit">保存 qB 设置</button></div>
+            </form>
+          </section>
         </section>
       </main>
     </div>
@@ -123,6 +156,6 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=0.6.0"></script>
   </body>
 </html>

@@ -49,6 +49,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS managed_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    torrent_hash TEXT NOT NULL,
+    torrent_name TEXT NOT NULL DEFAULT '',
+    source_path TEXT NOT NULL UNIQUE,
+    library_path TEXT NOT NULL UNIQUE,
+    identity_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'planning',
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    removed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_managed_links_hash ON managed_links(torrent_hash);
+CREATE INDEX IF NOT EXISTS idx_managed_links_status ON managed_links(status);
 """
 
 DEFAULT_SETTINGS = {
@@ -57,6 +74,19 @@ DEFAULT_SETTINGS = {
     "tmdb_language": "zh-CN",
     "proxy_enabled": "false",
     "proxy_url": "",
+    "qb_enabled": "false",
+    "qb_url": "http://127.0.0.1:8080",
+    "qb_username": "admin",
+    "qb_password": "",
+    "qb_category": "meizang",
+    "qb_library_root": "",
+    "qb_remote_prefix": "",
+    "qb_local_prefix": "",
+    "qb_auto_cleanup": "true",
+    "qb_poll_seconds": "60",
+    "qb_last_sync_at": "",
+    "qb_last_sync_status": "never",
+    "qb_last_sync_message": "",
 }
 
 
@@ -66,6 +96,9 @@ class LibraryDatabase:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(managed_links)')}
+            if 'identity_json' not in columns:
+                connection.execute("ALTER TABLE managed_links ADD COLUMN identity_json TEXT NOT NULL DEFAULT '{}'")
 
     @contextmanager
     def connect(self):
@@ -205,3 +238,51 @@ class LibraryDatabase:
                     "files": [dict(row) for row in files],
                 })
             return result
+
+    def managed_links(self, status: str = "") -> List[Dict[str, Any]]:
+        where = " WHERE status=?" if status else ""
+        values = (status,) if status else ()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM managed_links{} ORDER BY id DESC".format(where), values
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def managed_link_for_source(self, source_path: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM managed_links WHERE source_path=?", (source_path,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def begin_managed_link(self, torrent_hash: str, torrent_name: str, source_path: str, library_path: str, identity=None) -> Dict[str, Any]:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO managed_links(torrent_hash,torrent_name,source_path,library_path,identity_json) VALUES(?,?,?,?,?)",
+                (torrent_hash.lower(), torrent_name, source_path, library_path, json.dumps(identity or {})),
+            )
+            row = connection.execute(
+                "SELECT * FROM managed_links WHERE source_path=?", (source_path,)
+            ).fetchone()
+            return dict(row)
+
+    def update_managed_link(self, link_id: int, status: str, message: str = "") -> None:
+        removed = "CURRENT_TIMESTAMP" if status == "removed" else "NULL"
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE managed_links SET status=?,message=?,updated_at=CURRENT_TIMESTAMP,removed_at={} WHERE id=?".format(removed),
+                (status, message, link_id),
+            )
+
+    def managed_link_stats(self) -> Dict[str, int]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT status,COUNT(*) AS count FROM managed_links GROUP BY status"
+            ).fetchall()
+        counts = {row["status"]: row["count"] for row in rows}
+        return {
+            "active": counts.get("active", 0),
+            "conflict": counts.get("conflict", 0),
+            "removed": counts.get("removed", 0),
+            "total": sum(counts.values()),
+        }
