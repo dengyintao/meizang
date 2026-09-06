@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +57,49 @@ class LibraryTests(unittest.TestCase):
         fourth = scan_root(self.database, self.root_record["id"])
         self.assertEqual(fourth["removed"], 1)
         self.assertEqual(self.database.stats()["total"], 2)
+
+    def test_slow_hash_does_not_block_adding_a_root(self):
+        (self.root / "slow.mkv").write_bytes(b"video")
+        second_root = Path(self.temporary.name) / "second"
+        second_root.mkdir()
+        hashing = threading.Event()
+        release_hash = threading.Event()
+        root_added = threading.Event()
+        errors = []
+
+        def slow_hash(_path):
+            hashing.set()
+            if not release_hash.wait(3):
+                raise RuntimeError("test timed out waiting to release hash")
+            return "digest"
+
+        def run_scan():
+            try:
+                scan_root(self.database, self.root_record["id"])
+            except Exception as error:
+                errors.append(error)
+
+        def add_root():
+            try:
+                self.database.add_root(str(second_root), "第二目录")
+            except Exception as error:
+                errors.append(error)
+            finally:
+                root_added.set()
+
+        with patch("meizang.scanner.sha256_file", side_effect=slow_hash):
+            scan_thread = threading.Thread(target=run_scan)
+            scan_thread.start()
+            self.assertTrue(hashing.wait(1))
+            add_thread = threading.Thread(target=add_root)
+            add_thread.start()
+            try:
+                self.assertTrue(root_added.wait(1), "扫描读取文件时不应占用 SQLite 写锁")
+            finally:
+                release_hash.set()
+                scan_thread.join(3)
+                add_thread.join(3)
+        self.assertFalse(errors)
 
     def test_missing_root_keeps_index(self):
         (self.root / "photo.jpg").write_bytes(b"photo")

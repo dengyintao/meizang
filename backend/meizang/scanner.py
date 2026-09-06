@@ -54,65 +54,82 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
 
     with database.connect() as connection:
         existing = {
-            row["path"]: row
+            row["path"]: dict(row)
             for row in connection.execute(
                 "SELECT id, path, size, mtime_ns, media_type FROM media_assets WHERE root_id=?", (root_id,)
             )
         }
 
-        def on_error(_error):
-            nonlocal traversal_complete
-            traversal_complete = False
-            counters["failed"] += 1
+    pending = []
 
-        for current, directories, files in os.walk(str(root_path), onerror=on_error, followlinks=False):
-            directories[:] = [name for name in directories if not name.startswith(".@")]
-            for filename in files:
-                path = Path(current) / filename
-                if path.is_symlink():
-                    continue
-                kind = media_type(path)
-                if kind == "other":
-                    continue
-                try:
-                    stat = path.stat()
-                    old = existing.get(str(path))
-                    unchanged = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
-                    if unchanged and not (force_metadata and kind == "video"):
-                        connection.execute("UPDATE media_assets SET scan_token=? WHERE id=?", (token, old["id"]))
-                        counters["unchanged"] += 1
-                        continue
-                    metadata = extract_metadata(path, kind, provider_settings)
-                    if unchanged:
-                        connection.execute(
-                            "UPDATE media_assets SET title=?,year=?,duration=?,width=?,height=?,codec=?,metadata_json=?,scan_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (metadata["title"], metadata["year"], metadata["duration"], metadata["width"], metadata["height"], metadata["codec"], json.dumps(metadata, ensure_ascii=False), token, old["id"]),
-                        )
-                        counters["updated"] += 1
-                        continue
-                    digest = sha256_file(path)
-                    relative = str(path.relative_to(root_path))
-                    values = (
-                        root_id, str(path), relative, filename, path.suffix.lower(), kind,
-                        stat.st_size, stat.st_mtime_ns, digest, metadata["title"], metadata["year"],
-                        metadata["duration"], metadata["width"], metadata["height"], metadata["codec"],
-                        json.dumps(metadata, ensure_ascii=False), token,
-                    )
-                    connection.execute(
-                        "INSERT INTO media_assets(root_id,path,relative_path,filename,extension,media_type,size,mtime_ns,sha256,title,year,duration,width,height,codec,metadata_json,scan_token) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,path) DO UPDATE SET "
-                        "relative_path=excluded.relative_path, filename=excluded.filename, extension=excluded.extension, "
-                        "media_type=excluded.media_type, size=excluded.size, mtime_ns=excluded.mtime_ns, sha256=excluded.sha256, "
-                        "title=excluded.title, year=excluded.year, duration=excluded.duration, width=excluded.width, "
-                        "height=excluded.height, codec=excluded.codec, metadata_json=excluded.metadata_json, "
-                        "scan_token=excluded.scan_token, updated_at=CURRENT_TIMESTAMP",
-                        values,
-                    )
-                    counters["updated" if old else "inserted"] += 1
-                except (OSError, ValueError):
-                    traversal_complete = False
-                    counters["failed"] += 1
+    def flush_pending():
+        if not pending:
+            return
+        with database.connect() as connection:
+            for statement, values in pending:
+                connection.execute(statement, values)
+        pending.clear()
 
+    def queue_write(statement, values):
+        pending.append((statement, values))
+        if len(pending) >= 100:
+            flush_pending()
+
+    def on_error(_error):
+        nonlocal traversal_complete
+        traversal_complete = False
+        counters["failed"] += 1
+
+    for current, directories, files in os.walk(str(root_path), onerror=on_error, followlinks=False):
+        directories[:] = [name for name in directories if not name.startswith(".@")]
+        for filename in files:
+            path = Path(current) / filename
+            if path.is_symlink():
+                continue
+            kind = media_type(path)
+            if kind == "other":
+                continue
+            try:
+                stat = path.stat()
+                old = existing.get(str(path))
+                unchanged = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
+                if unchanged and not (force_metadata and kind == "video"):
+                    queue_write("UPDATE media_assets SET scan_token=? WHERE id=?", (token, old["id"]))
+                    counters["unchanged"] += 1
+                    continue
+                metadata = extract_metadata(path, kind, provider_settings)
+                if unchanged:
+                    queue_write(
+                        "UPDATE media_assets SET title=?,year=?,duration=?,width=?,height=?,codec=?,metadata_json=?,scan_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (metadata["title"], metadata["year"], metadata["duration"], metadata["width"], metadata["height"], metadata["codec"], json.dumps(metadata, ensure_ascii=False), token, old["id"]),
+                    )
+                    counters["updated"] += 1
+                    continue
+                digest = sha256_file(path)
+                relative = str(path.relative_to(root_path))
+                values = (
+                    root_id, str(path), relative, filename, path.suffix.lower(), kind,
+                    stat.st_size, stat.st_mtime_ns, digest, metadata["title"], metadata["year"],
+                    metadata["duration"], metadata["width"], metadata["height"], metadata["codec"],
+                    json.dumps(metadata, ensure_ascii=False), token,
+                )
+                queue_write(
+                    "INSERT INTO media_assets(root_id,path,relative_path,filename,extension,media_type,size,mtime_ns,sha256,title,year,duration,width,height,codec,metadata_json,scan_token) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,path) DO UPDATE SET "
+                    "relative_path=excluded.relative_path, filename=excluded.filename, extension=excluded.extension, "
+                    "media_type=excluded.media_type, size=excluded.size, mtime_ns=excluded.mtime_ns, sha256=excluded.sha256, "
+                    "title=excluded.title, year=excluded.year, duration=excluded.duration, width=excluded.width, "
+                    "height=excluded.height, codec=excluded.codec, metadata_json=excluded.metadata_json, "
+                    "scan_token=excluded.scan_token, updated_at=CURRENT_TIMESTAMP",
+                    values,
+                )
+                counters["updated" if old else "inserted"] += 1
+            except (OSError, ValueError):
+                traversal_complete = False
+                counters["failed"] += 1
+
+    flush_pending()
+    with database.connect() as connection:
         if traversal_complete:
             counters["removed"] = connection.execute(
                 "SELECT COUNT(*) FROM media_assets WHERE root_id=? AND scan_token<>?", (root_id, token)

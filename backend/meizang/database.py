@@ -95,6 +95,7 @@ class LibraryDatabase:
         self.path = str(Path(path).expanduser())
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
             columns = {row['name'] for row in connection.execute('PRAGMA table_info(managed_links)')}
             if 'identity_json' not in columns:
@@ -105,7 +106,6 @@ class LibraryDatabase:
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 30000")
         try:
             yield connection
