@@ -17,6 +17,9 @@ fi
 if ! ls "${WHEEL_CACHE}"/face_recognition-*.whl >/dev/null 2>&1; then
   python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --only-binary=:all: face-recognition==1.3.0
 fi
+if ! ls "${WHEEL_CACHE}"/setuptools-80.9.0-*.whl >/dev/null 2>&1; then
+  python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --only-binary=:all: setuptools==80.9.0
+fi
 if ! ls "${WHEEL_CACHE}"/face_recognition_models-0.3.0.tar.gz >/dev/null 2>&1; then
   python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --no-binary=:all: face-recognition-models==0.3.0
 fi
