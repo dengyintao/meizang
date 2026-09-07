@@ -1,0 +1,85 @@
+name: Build and release FPK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fpk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          package_version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' packaging/fnos/manifest)"
+          if [[ "${GITHUB_REF_NAME}" != "v${package_version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match manifest version ${package_version}." >&2
+            exit 1
+          fi
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Download fnOS packer
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error \
+            https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64 \
+            --output "${RUNNER_TEMP}/fnpack"
+          chmod 755 "${RUNNER_TEMP}/fnpack"
+          "${RUNNER_TEMP}/fnpack" --help >/dev/null
+
+      - name: Build FPK
+        env:
+          FNPACK_BIN: ${{ runner.temp }}/fnpack
+          MDC_WHEEL_CACHE: ${{ runner.temp }}/meizang-mdc-wheels
+        run: ./scripts/build-fpk.sh
+
+      - name: Verify package
+        shell: bash
+        run: |
+          sha256sum --check meizang.fpk.sha256
+          tar -xOzf meizang.fpk manifest | grep -E '^(appname|version|platform)'
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meizang-${{ github.ref_name }}-x86
+          path: |
+            meizang.fpk
+            meizang.fpk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" meizang.fpk meizang.fpk.sha256 --generate-notes --verify-tag
