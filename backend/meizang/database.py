@@ -66,6 +66,32 @@ CREATE TABLE IF NOT EXISTS managed_links (
 
 CREATE INDEX IF NOT EXISTS idx_managed_links_hash ON managed_links(torrent_hash);
 CREATE INDEX IF NOT EXISTS idx_managed_links_status ON managed_links(status);
+
+CREATE TABLE IF NOT EXISTS mdc_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'queued',
+    progress INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    log_text TEXT NOT NULL DEFAULT '',
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mdc_schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    interval_seconds INTEGER NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    next_run_at REAL NOT NULL,
+    last_run_at REAL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -87,6 +113,7 @@ DEFAULT_SETTINGS = {
     "qb_last_sync_at": "",
     "qb_last_sync_status": "never",
     "qb_last_sync_message": "",
+    "mdc_config_ini": "",
 }
 
 
@@ -238,6 +265,103 @@ class LibraryDatabase:
                     "files": [dict(row) for row in files],
                 })
             return result
+
+    @staticmethod
+    def _mdc_job(row) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        item = dict(row)
+        item["payload"] = json.loads(item.pop("payload_json") or "{}")
+        item["cancel_requested"] = bool(item["cancel_requested"])
+        return item
+
+    def create_mdc_job(self, job_id: str, kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO mdc_jobs(id,kind,payload_json) VALUES(?,?,?)",
+                (job_id, kind, json.dumps(payload, ensure_ascii=False)),
+            )
+            return self._mdc_job(connection.execute("SELECT * FROM mdc_jobs WHERE id=?", (job_id,)).fetchone())
+
+    def mdc_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            return self._mdc_job(connection.execute("SELECT * FROM mdc_jobs WHERE id=?", (job_id,)).fetchone())
+
+    def mdc_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM mdc_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            return [self._mdc_job(row) for row in rows]
+
+    def update_mdc_job(self, job_id: str, **values) -> None:
+        allowed = {"status", "progress", "total", "message", "error", "log_text", "cancel_requested", "started_at", "finished_at"}
+        values = {key: value for key, value in values.items() if key in allowed}
+        if not values:
+            return
+        assignments = ",".join("{}=?".format(key) for key in values)
+        with self.connect() as connection:
+            connection.execute("UPDATE mdc_jobs SET {} WHERE id=?".format(assignments), (*values.values(), job_id))
+
+    def append_mdc_log(self, job_id: str, line: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE mdc_jobs SET log_text=substr(log_text || ?, -200000), message=? WHERE id=?",
+                (line.rstrip() + "\n", line.strip()[-500:], job_id),
+            )
+
+    def cancel_mdc_job(self, job_id: str) -> None:
+        self.update_mdc_job(job_id, cancel_requested=1, message="正在取消")
+
+    def recover_mdc_jobs(self) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE mdc_jobs SET status='failed', error='服务重启导致任务中止', finished_at=CURRENT_TIMESTAMP "
+                "WHERE status IN ('queued','running')"
+            )
+
+    def create_mdc_schedule(self, name: str, interval_seconds: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        import time
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO mdc_schedules(name,interval_seconds,payload_json,next_run_at) VALUES(?,?,?,?)",
+                (name, interval_seconds, json.dumps(payload, ensure_ascii=False), time.time() + interval_seconds),
+            )
+            row = connection.execute("SELECT * FROM mdc_schedules WHERE id=?", (cursor.lastrowid,)).fetchone()
+            return self._mdc_schedule(row)
+
+    @staticmethod
+    def _mdc_schedule(row) -> Dict[str, Any]:
+        item = dict(row)
+        item["enabled"] = bool(item["enabled"])
+        item["payload"] = json.loads(item.pop("payload_json") or "{}")
+        return item
+
+    def mdc_schedules(self) -> List[Dict[str, Any]]:
+        with self.connect() as connection:
+            return [self._mdc_schedule(row) for row in connection.execute("SELECT * FROM mdc_schedules ORDER BY id")]
+
+    def update_mdc_schedule(self, schedule_id: int, values: Dict[str, Any]) -> None:
+        allowed = {"name", "enabled", "interval_seconds"}
+        updates = {key: values[key] for key in allowed if key in values}
+        if "payload" in values:
+            updates["payload_json"] = json.dumps(values["payload"], ensure_ascii=False)
+        if not updates:
+            return
+        assignments = ",".join("{}=?".format(key) for key in updates)
+        with self.connect() as connection:
+            connection.execute("UPDATE mdc_schedules SET {} WHERE id=?".format(assignments), (*updates.values(), schedule_id))
+
+    def delete_mdc_schedule(self, schedule_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM mdc_schedules WHERE id=?", (schedule_id,))
+
+    def due_mdc_schedules(self, now: float) -> List[Dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM mdc_schedules WHERE enabled=1 AND next_run_at<=?", (now,)).fetchall()
+            return [self._mdc_schedule(row) for row in rows]
+
+    def advance_mdc_schedule(self, schedule_id: int, now: float, interval: int) -> None:
+        with self.connect() as connection:
+            connection.execute("UPDATE mdc_schedules SET last_run_at=?,next_run_at=? WHERE id=?", (now, now + interval, schedule_id))
 
     def managed_links(self, status: str = "") -> List[Dict[str, Any]]:
         where = " WHERE status=?" if status else ""

@@ -220,13 +220,14 @@ async function pollScan(jobId) {
 
 function route() {
   const name = location.hash.slice(1) || 'overview';
-  const titles = { overview: '媒体概览', library: '媒体库', duplicates: '重复文件', settings: '目录设置' };
+  const titles = { overview: '媒体概览', library: '媒体库', scraping: '影片刮削', duplicates: '重复文件', settings: '目录设置' };
   const target = titles[name] ? name : 'overview';
   $$('.view').forEach(view => view.classList.toggle('active', view.dataset.view === target));
   $$('.nav a').forEach(link => link.classList.toggle('active', link.dataset.route === target));
   $('#page-title').textContent = titles[target];
   if (target === 'library') loadAssets().catch(error => toast(error.message, true));
   if (target === 'duplicates') loadDuplicates().catch(error => toast(error.message, true));
+  if (target === 'scraping') loadMDC().catch(error => toast(error.message, true));
 }
 
 const dialog = $('#add-root-dialog');
@@ -417,6 +418,85 @@ $$('.path-picker').forEach(button => button.addEventListener('click', async () =
     }
   } catch (error) { toast(error.message, true); }
 }));
+
+const mdcSectionNames = {
+  common:'运行模式', advenced_sleep:'批处理节奏', proxy:'MDC 独立代理', Name_Rule:'目录与文件命名',
+  update:'更新检查', priority:'Provider 优先级', escape:'路径排除', debug_mode:'调试', translate:'翻译',
+  trailer:'预告片', uncensored:'无码识别', media:'媒体与字幕', watermark:'封面水印', extrafanart:'剧照',
+  storyline:'剧情简介', cc_convert:'繁简转换', javdb:'JavDB 线路', face:'人脸识别裁剪', jellyfin:'Jellyfin',
+  actor_photo:'演员头像', direct:'直连模式'
+};
+
+function mdcField(section, key, value) {
+  const id = `mdc-cfg-${section}-${key}`.replaceAll('_', '-');
+  let control;
+  if (key === 'main_mode') control = `<select id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}"><option value="1">1 · 刮削并整理</option><option value="2">2 · 仅整理</option><option value="3">3 · 原目录刮削</option></select>`;
+  else if (key === 'link_mode') control = `<select id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}"><option value="0">0 · 移动</option><option value="1">1 · 软链接</option><option value="2">2 · 优先硬链接</option></select>`;
+  else if (['switch','scan_hardlink','failed_move','auto_exit','translate_to_sc','del_empty_folder','ignore_failed_list','download_only_missing_images','jellyfin','actor_only_tag','anonymous_fill','image_naming_with_number','number_uppercase','uncensored_only','aways_imagecut','multi_part_fanart','download_for_kodi'].includes(key)) control = `<select id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}"><option value="0">关闭</option><option value="1">启用</option></select>`;
+  else control = `<input id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}" value="${escapeHtml(value)}" ${section === 'translate' && key === 'key' ? 'type="password" autocomplete="off" placeholder="已配置时留空保持"' : ''}>`;
+  return `<label><small>[${escapeHtml(section)}] ${escapeHtml(key)}</small>${control}</label>`;
+}
+
+function renderMDCConfig(data) {
+  $('#mdc-engine-status').textContent = `MDC 引擎已就绪 · ${data.provider_count} 个 Provider`;
+  $('#mdc-provider-count').textContent = `${data.provider_count} PROVIDERS`;
+  $('#mdc-config-sections').innerHTML = Object.entries(data.sections).map(([section, values], index) => `<details class="mdc-config-section" ${index < 3 ? 'open' : ''}><summary>${escapeHtml(mdcSectionNames[section] || section)} · [${escapeHtml(section)}]</summary><div class="mdc-config-grid">${Object.entries(values).map(([key, value]) => mdcField(section, key, value)).join('')}</div></details>`).join('');
+  $$('[data-mdc-section]').forEach(input => { if (input.tagName === 'SELECT') input.value = data.sections[input.dataset.mdcSection][input.dataset.mdcKey]; });
+}
+
+function mdcRunPayload() {
+  return {
+    kind:'scan', root_id:Number($('#mdc-root').value), mode:Number($('#mdc-mode').value),
+    source:$('#mdc-source').value.trim(), regex:$('#mdc-regex').value.trim(),
+    no_network:$('#mdc-no-network').checked, dry_run:$('#mdc-dry-run').checked,
+  };
+}
+
+async function loadMDC() {
+  const [settings, jobs, schedules] = await Promise.all([api('/settings/mdc'), api('/mdc/jobs'), api('/mdc/schedules')]);
+  renderMDCConfig(settings);
+  $('#mdc-root').innerHTML = state.roots.length ? state.roots.map(root => `<option value="${root.id}">${escapeHtml(root.label || root.path)} · ${escapeHtml(root.path)}</option>`).join('') : '<option value="">请先添加媒体目录</option>';
+  $('#mdc-jobs').classList.toggle('empty-state', !jobs.length);
+  $('#mdc-jobs').innerHTML = jobs.length ? jobs.map(job => `<article class="mdc-job"><div><strong>${escapeHtml(job.kind)} · ${escapeHtml(job.status)}</strong><p>${escapeHtml(job.created_at)} · ${escapeHtml(job.message || job.error)}</p></div><div class="mdc-job-actions"><button class="text-button mdc-show-log" data-job="${job.id}">日志</button>${['queued','running'].includes(job.status) ? `<button class="text-button mdc-cancel" data-job="${job.id}">取消</button>` : ''}</div></article>`).join('') : '暂无 MDC 任务';
+  $$('.mdc-show-log').forEach(button => button.addEventListener('click', async () => { const job = await api(`/mdc/jobs/${button.dataset.job}`); $('#mdc-log').textContent = job.log_text || job.error || '暂无日志'; }));
+  $$('.mdc-cancel').forEach(button => button.addEventListener('click', async () => { await api(`/mdc/jobs/${button.dataset.job}/cancel`, {method:'POST'}); await loadMDC(); }));
+  $('#mdc-schedules').classList.toggle('empty-state', !schedules.length);
+  $('#mdc-schedules').innerHTML = schedules.length ? schedules.map(item => `<article class="mdc-schedule-item"><strong>${escapeHtml(item.name)}</strong><button class="text-button mdc-delete-schedule" data-schedule="${item.id}">删除</button><p>每 ${item.interval_seconds} 秒 · ${item.enabled ? '已启用' : '已暂停'}</p></article>`).join('') : '暂无定时任务';
+  $$('.mdc-delete-schedule').forEach(button => button.addEventListener('click', async () => { await api(`/mdc/schedules/${button.dataset.schedule}`, {method:'DELETE'}); await loadMDC(); }));
+}
+
+$('#mdc-config-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const sections = {};
+  $$('[data-mdc-section]').forEach(input => { (sections[input.dataset.mdcSection] ||= {})[input.dataset.mdcKey] = input.value; });
+  try { renderMDCConfig(await api('/settings/mdc', {method:'PUT', body:JSON.stringify({sections})})); toast('完整 MDC 配置已保存'); }
+  catch (error) { toast(error.message, true); }
+});
+
+$('#mdc-run-form').addEventListener('submit', async event => {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  try { const job = await api('/mdc/jobs', {method:'POST', body:JSON.stringify(mdcRunPayload())}); toast(`MDC 任务已启动：${job.id.slice(0,8)}`); await loadMDC(); }
+  catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+});
+
+$('#mdc-search-button').addEventListener('click', async () => {
+  const number = window.prompt('输入要测试的影片番号'); if (!number) return;
+  try { await api('/mdc/jobs', {method:'POST', body:JSON.stringify({kind:'search', number, source:$('#mdc-source').value.trim()})}); toast('番号搜索任务已启动'); await loadMDC(); }
+  catch (error) { toast(error.message, true); }
+});
+
+$('#mdc-schedule-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try { await api('/mdc/schedules', {method:'POST', body:JSON.stringify({name:$('#mdc-schedule-name').value.trim(), interval_seconds:Number($('#mdc-schedule-interval').value), payload:mdcRunPayload()})}); toast('定时任务已保存'); await loadMDC(); }
+  catch (error) { toast(error.message, true); }
+});
+
+$('#mdc-refresh').addEventListener('click', () => loadMDC().catch(error => toast(error.message, true)));
+$('#mdc-reset-config').addEventListener('click', async () => {
+  if (!window.confirm('恢复 Movie_Data_Capture 源仓库中的完整默认配置？')) return;
+  try { renderMDCConfig(await api('/settings/mdc/reset', {method:'POST'})); toast('已恢复 MDC 默认配置'); }
+  catch (error) { toast(error.message, true); }
+});
 
 Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]).catch(error => toast(error.message, true));
 route();

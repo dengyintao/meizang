@@ -9,6 +9,7 @@ mkdir -p "${STAGING_DIR}/app/server" "${STAGING_DIR}/app/ui/images" "${STAGING_D
 cp -R "${PROJECT_DIR}/packaging/fnos/." "${STAGING_DIR}/"
 cp -R "${PROJECT_DIR}/backend" "${STAGING_DIR}/app/server/backend"
 cp -R "${PROJECT_DIR}/frontend/dist" "${STAGING_DIR}/app/server/frontend"
+"${PROJECT_DIR}/scripts/prepare-mdc-runtime.sh" "${STAGING_DIR}/app/server/vendor"
 
 find "${STAGING_DIR}" -name '.DS_Store' -delete
 chmod 755 "${STAGING_DIR}"/cmd/*

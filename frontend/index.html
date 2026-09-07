@@ -8,7 +8,7 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.6.1">
+  <link rel="stylesheet" href="provider.css?v=0.7.0">
   </head>
   <body>
     <div class="app-shell">
@@ -20,8 +20,9 @@
         <nav class="nav" aria-label="主导航">
           <a href="#overview" data-route="overview" class="active"><span>◫</span>概览</a>
           <a href="#library" data-route="library"><span>▦</span>媒体库</a>
+          <a href="#scraping" data-route="scraping"><span>⌁</span>影片刮削</a>
           <a href="#duplicates" data-route="duplicates"><span>◉</span>重复文件</a>
-          <a href="#settings" data-route="settings"><span>⌁</span>目录设置</a>
+          <a href="#settings" data-route="settings"><span>⚙</span>目录设置</a>
         </nav>
         <div class="sidebar-foot">
           <span class="status-dot"></span>
@@ -81,6 +82,45 @@
         <section class="view" data-view="duplicates">
           <div class="section-intro"><div><span class="kicker">SAFE REVIEW</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别。初版仅展示，不会删除任何文件。</p></div><strong id="reclaimable">0 B 可释放</strong></div>
           <div id="duplicate-list" class="duplicate-list"></div>
+        </section>
+
+        <section class="view" data-view="scraping">
+          <div class="section-intro"><div><span class="kicker">MOVIE DATA CAPTURE ENGINE</span><h2>影片刮削与整理</h2><p>完整 MDC 引擎以后台任务运行，支持多站点、NFO、图片、演员头像、字幕与命名整理。</p></div><strong id="mdc-engine-status">正在读取…</strong></div>
+          <div class="mdc-layout">
+            <section class="panel">
+              <div class="panel-head"><div><span class="kicker">RUN NOW</span><h3>新建任务</h3></div></div>
+              <form id="mdc-run-form">
+                <div class="provider-fields">
+                  <label>媒体目录<select id="mdc-root" required></select></label>
+                  <label>运行模式<select id="mdc-mode"><option value="1">模式 1 · 刮削并整理</option><option value="2">模式 2 · 仅整理</option><option value="3">模式 3 · 原目录刮削</option></select></label>
+                  <label>指定 Provider（可选）<input id="mdc-source" placeholder="例如 javbus；留空按优先级"></label>
+                  <label>文件过滤正则（可选）<input id="mdc-regex" placeholder="例如 ABC-\d+"></label>
+                </div>
+                <label class="switch-row"><span><strong>仅预览，不写文件</strong><small>使用 MDC zero-operation 检查识别番号和任务清单。</small></span><input id="mdc-dry-run" type="checkbox" checked></label>
+                <label class="switch-row"><span><strong>离线处理</strong><small>不请求 Provider，仅根据已有 NFO 执行支持的本地处理。</small></span><input id="mdc-no-network" type="checkbox"></label>
+                <div class="provider-actions"><button type="button" class="button" id="mdc-search-button">按番号测试</button><button class="button primary" type="submit">启动 MDC 任务</button></div>
+              </form>
+            </section>
+            <section class="panel">
+              <div class="panel-head"><div><span class="kicker">SCHEDULE</span><h3>定时刮削</h3></div></div>
+              <form id="mdc-schedule-form">
+                <label>任务名称<input id="mdc-schedule-name" value="每日影片刮削"></label>
+                <label>运行间隔<select id="mdc-schedule-interval"><option value="3600">每小时</option><option value="21600">每 6 小时</option><option value="86400" selected>每天</option><option value="604800">每周</option></select></label>
+                <button class="button" type="submit">添加定时任务</button>
+              </form>
+              <div id="mdc-schedules" class="mdc-schedule-list empty-state">暂无定时任务</div>
+            </section>
+          </div>
+          <section class="panel mdc-jobs-panel">
+            <div class="panel-head"><div><span class="kicker">TASK QUEUE</span><h3>任务与日志</h3></div><button type="button" class="text-button" id="mdc-refresh">刷新</button></div>
+            <div id="mdc-jobs" class="mdc-job-list empty-state">暂无 MDC 任务</div>
+            <pre id="mdc-log">选择任务查看运行日志</pre>
+          </section>
+          <section class="panel provider-panel mdc-config-panel">
+            <div class="panel-head"><div><span class="kicker">FULL CONFIGURATION</span><h3>完整 MDC 配置</h3></div><span id="mdc-provider-count" class="provider-status">读取中</span></div>
+            <p class="provider-credit">这里映射源仓库 config.ini 的全部分组和配置项。路径可使用绝对路径；执行前仍会经过飞牛授权边界检查。</p>
+            <form id="mdc-config-form"><div id="mdc-config-sections"></div><div class="provider-actions"><button type="button" class="button" id="mdc-reset-config">恢复源仓库配置</button><button class="button primary" type="submit">保存完整配置</button></div></form>
+          </section>
         </section>
 
         <section class="view" data-view="settings">
@@ -156,6 +196,6 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.6.1"></script>
+    <script type="module" src="app.js?v=0.7.0"></script>
   </body>
 </html>

@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__
 from .database import LibraryDatabase
 from .fnos_api import shared_accessible_folders
+from .mdc_bridge import MDCManager
 from .organizer import QBIntegration
 from .providers.tmdb import TMDBProvider
 from .qbittorrent import validate_qb_url
@@ -191,6 +192,10 @@ class MeizangApplication:
             os.environ.get("TRIM_API_TOKEN", "").strip()
         )
         self.qb = QBIntegration(self.database, self.is_authorized_path)
+        self.mdc = MDCManager(
+            self.database, self.normalize_root, self.is_authorized_path,
+            on_complete=lambda root_id: self.jobs.start(root_id, force_metadata=True),
+        )
 
     def refresh_allowed_paths(self) -> None:
         if not os.environ.get("TRIM_API_TOKEN", "").strip():
@@ -278,6 +283,15 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(200, public_qb_settings(
                         application.database.settings(), application.database.managed_link_stats(),
                     ))
+                if path == "/api/settings/mdc":
+                    return self.send_json(200, application.mdc.config.public())
+                if path == "/api/mdc/jobs":
+                    return self.send_json(200, application.database.mdc_jobs(int(query.get("limit", ["50"])[0])))
+                if path.startswith("/api/mdc/jobs/"):
+                    job = application.database.mdc_job(path.rsplit("/", 1)[-1])
+                    return self.send_json(200, job) if job else self.send_json(404, {"error": "MDC 任务不存在"})
+                if path == "/api/mdc/schedules":
+                    return self.send_json(200, application.database.mdc_schedules())
                 if path == "/api/assets":
                     items = application.database.assets(
                         query.get("type", [""])[0], query.get("q", [""])[0],
@@ -336,6 +350,16 @@ def make_handler(application: MeizangApplication):
                 if path == "/api/qbittorrent/sync":
                     application.refresh_allowed_paths()
                     return self.send_json(200, application.qb.sync_once())
+                if path == "/api/mdc/jobs":
+                    application.refresh_allowed_paths()
+                    return self.send_json(202, application.mdc.submit(payload))
+                if path == "/api/settings/mdc/reset":
+                    return self.send_json(200, application.mdc.config.reset())
+                if path.startswith("/api/mdc/jobs/") and path.endswith("/cancel"):
+                    return self.send_json(200, application.mdc.cancel(path.split("/")[-2]))
+                if path == "/api/mdc/schedules":
+                    application.refresh_allowed_paths()
+                    return self.send_json(201, application.mdc.create_schedule(payload))
                 if path == "/api/roots":
                     root = application.normalize_root(str(payload.get("path", "")).strip())
                     return self.send_json(201, application.database.add_root(str(root), str(payload.get("label", "")).strip()))
@@ -365,6 +389,8 @@ def make_handler(application: MeizangApplication):
                         updates["qb_password"] = ""
                     saved = application.database.update_settings(updates)
                     return self.send_json(200, public_qb_settings(saved, application.database.managed_link_stats()))
+                if path == "/api/settings/mdc":
+                    return self.send_json(200, application.mdc.config.save(payload.get("sections", payload)))
                 if path != "/api/settings/providers":
                     return self.send_json(404, {"error": "接口不存在"})
                 tmdb = payload.get("tmdb", {})
@@ -400,6 +426,36 @@ def make_handler(application: MeizangApplication):
                     updates["proxy_url"] = proxy_url
                 settings = application.database.update_settings(updates)
                 return self.send_json(200, public_provider_settings(settings))
+            except (ValueError, OSError) as error:
+                return self.send_json(400, {"error": str(error)})
+            except Exception:
+                traceback.print_exc()
+                return self.send_json(500, {"error": "服务器内部错误"})
+
+        def do_PATCH(self):
+            try:
+                path, _query = self.route_path()
+                payload = self.body_json()
+                if path.startswith("/api/mdc/schedules/"):
+                    schedule_id = int(path.rsplit("/", 1)[-1])
+                    if "interval_seconds" in payload and int(payload["interval_seconds"]) < 60:
+                        raise ValueError("间隔不能小于 60 秒")
+                    application.database.update_mdc_schedule(schedule_id, payload)
+                    return self.send_json(200, {"status": "ok"})
+                return self.send_json(404, {"error": "接口不存在"})
+            except (ValueError, OSError) as error:
+                return self.send_json(400, {"error": str(error)})
+            except Exception:
+                traceback.print_exc()
+                return self.send_json(500, {"error": "服务器内部错误"})
+
+        def do_DELETE(self):
+            try:
+                path, _query = self.route_path()
+                if path.startswith("/api/mdc/schedules/"):
+                    application.database.delete_mdc_schedule(int(path.rsplit("/", 1)[-1]))
+                    return self.send_json(200, {"status": "ok"})
+                return self.send_json(404, {"error": "接口不存在"})
             except (ValueError, OSError) as error:
                 return self.send_json(400, {"error": str(error)})
             except Exception:
@@ -447,9 +503,11 @@ def serve(database_path: str, static_dir: str, host: str, port: int, socket_path
         server = ThreadingHTTPServer((host, port), handler)
         print("媒藏 listening on http://{}:{}{}".format(host, port, prefix), flush=True)
     application.qb.start()
+    application.mdc.start()
     try:
         server.serve_forever()
     finally:
+        application.mdc.stop()
         application.qb.stop()
         server.server_close()
         if socket_path:

@@ -9,3 +9,5 @@ __pycache__/
 .DS_Store
 frontend/node_modules/
 frontend/dist/
+data/
+backend/third_party/movie_data_capture/logs/

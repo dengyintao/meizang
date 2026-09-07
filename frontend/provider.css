@@ -148,3 +148,18 @@
   .proxy-heading,
   .proxy-test-row { align-items: stretch; flex-direction: column; }
 }
+
+.mdc-layout { display:grid; grid-template-columns:1.45fr 1fr; gap:18px; }
+.mdc-layout form > label:not(.switch-row), #mdc-schedule-form label { display:grid; gap:7px; margin:12px 0; color:var(--muted); font-size:11px; font-weight:750; }
+.mdc-layout input,.mdc-layout select,.mdc-config-panel input,.mdc-config-panel select { width:100%; padding:12px; border:1px solid var(--line); border-radius:10px; background:transparent; color:inherit; }
+.mdc-jobs-panel,.mdc-config-panel { margin-top:18px; }
+.mdc-job,.mdc-schedule-item { display:grid; grid-template-columns:1fr auto; gap:8px 14px; padding:13px; margin:8px 0; border:1px solid var(--line); border-radius:11px; }
+.mdc-job p,.mdc-schedule-item p { grid-column:1/-1; margin:0; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.mdc-job-actions { display:flex; gap:8px; }
+#mdc-log { min-height:150px; max-height:390px; overflow:auto; padding:15px; border-radius:12px; background:#080d18; color:#b9c4d6; white-space:pre-wrap; font-size:11px; line-height:1.6; }
+.mdc-config-section { margin:12px 0; border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+.mdc-config-section summary { cursor:pointer; padding:15px 17px; font-weight:800; background:rgba(255,255,255,.02); }
+.mdc-config-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; padding:17px; }
+.mdc-config-grid label { display:grid; gap:6px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.mdc-config-grid label small { color:var(--text); opacity:.75; font-family:ui-monospace,monospace; }
+@media(max-width:900px){.mdc-layout{grid-template-columns:1fr}.mdc-config-grid{grid-template-columns:1fr}}

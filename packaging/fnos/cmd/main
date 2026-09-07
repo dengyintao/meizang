@@ -25,6 +25,7 @@ start_app() {
     MEIZANG_STATIC="${APP_DIR}/frontend" \
     MEIZANG_SOCKET="${SOCKET_PATH}" \
     MEIZANG_PREFIX="/app/meizang" \
+    PYTHONPATH="${APP_DIR}/vendor:${APP_DIR}/backend:${APP_DIR}/backend/third_party/movie_data_capture" \
     nohup python3 backend/main.py >> "${LOG_FILE}" 2>&1 &
     echo "$!" > "${PID_FILE}"
     count=0
