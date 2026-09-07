@@ -17,11 +17,24 @@ fi
 if ! ls "${WHEEL_CACHE}"/face_recognition-*.whl >/dev/null 2>&1; then
   python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --only-binary=:all: face-recognition==1.3.0
 fi
+if ! ls "${WHEEL_CACHE}"/face_recognition_models-0.3.0.tar.gz >/dev/null 2>&1; then
+  python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --no-binary=:all: face-recognition-models==0.3.0
+fi
 
 find "${TARGET_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 for wheel in "${WHEEL_CACHE}"/*.whl; do
   python3 -m zipfile -e "${wheel}" "${TARGET_DIR}"
 done
+
+# PyPI's only wheel is the obsolete 0.1.3 release and lacks the 5-point and
+# CNN models that face_recognition imports eagerly. Overlay the complete 0.3.0
+# source package so the bundled runtime remains fully offline-capable.
+MODEL_TMP="$(mktemp -d /tmp/meizang-face-models.XXXXXX)"
+tar -xzf "${WHEEL_CACHE}/face_recognition_models-0.3.0.tar.gz" -C "${MODEL_TMP}"
+rm -rf "${TARGET_DIR}/face_recognition_models"
+cp -R "${MODEL_TMP}/face_recognition_models-0.3.0/face_recognition_models" "${TARGET_DIR}/"
+rm -rf "${MODEL_TMP}"
+
 find "${TARGET_DIR}" -name '*.pyc' -delete
 find "${TARGET_DIR}" -type d -name '__pycache__' -prune -exec rm -rf {} +
 
