@@ -156,6 +156,9 @@ class LibraryTests(unittest.TestCase):
             scan_thread = threading.Thread(target=run_scan)
             scan_thread.start()
             self.assertTrue(hashing.wait(1))
+            indexed = self.database.assets(media_type="video")
+            self.assertEqual(len(indexed), 1, "大视频应在完整哈希完成前出现在媒体库")
+            self.assertEqual(indexed[0]["sha256"], "")
             add_thread = threading.Thread(target=add_root)
             add_thread.start()
             try:

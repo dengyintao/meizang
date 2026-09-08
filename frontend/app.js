@@ -235,11 +235,17 @@ $('#rescrape-videos').addEventListener('click', async event => {
 });
 
 async function pollScan(jobId) {
+  let refreshTick = 0;
   for (;;) {
     await new Promise(resolve => setTimeout(resolve, 650));
     const job = await api(`/scans/${jobId}`);
     if (job.status === 'completed') return job.result;
     if (job.status === 'failed') throw new Error(job.error || '扫描失败');
+    refreshTick += 1;
+    if (refreshTick % 8 === 0) {
+      await loadStats();
+      if (location.hash === '#library') await loadAssets();
+    }
   }
 }
 

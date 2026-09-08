@@ -56,7 +56,7 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
         existing = {
             row["path"]: dict(row)
             for row in connection.execute(
-                "SELECT id, path, size, mtime_ns, media_type FROM media_assets WHERE root_id=?", (root_id,)
+                "SELECT id, path, size, mtime_ns, media_type, sha256 FROM media_assets WHERE root_id=?", (root_id,)
             )
         }
 
@@ -92,24 +92,24 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
             try:
                 stat = path.stat()
                 old = existing.get(str(path))
-                unchanged = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
-                if unchanged and not (force_metadata and kind == "video"):
+                same_identity = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
+                fully_indexed = same_identity and bool(old["sha256"])
+                if fully_indexed and not (force_metadata and kind == "video"):
                     queue_write("UPDATE media_assets SET scan_token=? WHERE id=?", (token, old["id"]))
                     counters["unchanged"] += 1
                     continue
                 metadata = extract_metadata(path, kind, provider_settings)
-                if unchanged:
+                if fully_indexed:
                     queue_write(
                         "UPDATE media_assets SET title=?,year=?,duration=?,width=?,height=?,codec=?,metadata_json=?,scan_token=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                         (metadata["title"], metadata["year"], metadata["duration"], metadata["width"], metadata["height"], metadata["codec"], json.dumps(metadata, ensure_ascii=False), token, old["id"]),
                     )
                     counters["updated"] += 1
                     continue
-                digest = sha256_file(path)
                 relative = str(path.relative_to(root_path))
                 values = (
                     root_id, str(path), relative, filename, path.suffix.lower(), kind,
-                    stat.st_size, stat.st_mtime_ns, digest, metadata["title"], metadata["year"],
+                    stat.st_size, stat.st_mtime_ns, "", metadata["title"], metadata["year"],
                     metadata["duration"], metadata["width"], metadata["height"], metadata["codec"],
                     json.dumps(metadata, ensure_ascii=False), token,
                 )
@@ -123,7 +123,19 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
                     "scan_token=excluded.scan_token, updated_at=CURRENT_TIMESTAMP",
                     values,
                 )
+                # Make large videos visible immediately. Full-file hashing may take
+                # minutes on a NAS and is only needed to finish duplicate detection.
+                flush_pending()
                 counters["updated" if old else "inserted"] += 1
+                digest = sha256_file(path)
+                final_stat = path.stat()
+                if final_stat.st_size != stat.st_size or final_stat.st_mtime_ns != stat.st_mtime_ns:
+                    raise OSError("文件在哈希期间发生变化")
+                queue_write(
+                    "UPDATE media_assets SET sha256=?,scan_token=?,updated_at=CURRENT_TIMESTAMP "
+                    "WHERE root_id=? AND path=? AND size=? AND mtime_ns=?",
+                    (digest, token, root_id, str(path), stat.st_size, stat.st_mtime_ns),
+                )
             except (OSError, ValueError):
                 traversal_complete = False
                 counters["failed"] += 1
