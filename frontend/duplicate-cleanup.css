@@ -1,0 +1,23 @@
+.duplicate-file b {
+  float: right;
+  color: var(--cyan);
+  font-size: 10px;
+}
+
+.duplicate-summary {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.duplicate-summary strong {
+  color: var(--lime);
+  font-size: 13px;
+}
+
+.button.danger {
+  background: rgba(255, 107, 87, .12);
+  border-color: rgba(255, 107, 87, .35);
+  color: var(--coral);
+}

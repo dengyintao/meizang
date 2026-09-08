@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .database import LibraryDatabase
+from .duplicate_cleanup import delete_duplicates
 from .fnos_api import shared_accessible_folders
 from .mdc_bridge import MDCManager
 from .organizer import QBIntegration
@@ -368,6 +369,14 @@ def make_handler(application: MeizangApplication):
                     if not application.database.root(root_id):
                         return self.send_json(404, {"error": "媒体目录不存在"})
                     return self.send_json(202, application.jobs.start(root_id, payload.get("force_metadata") is True))
+                if path == "/api/duplicates/delete":
+                    application.refresh_allowed_paths()
+                    return self.send_json(200, delete_duplicates(
+                        application.database,
+                        application.is_authorized_path,
+                        int(payload.get("expected_groups", -1)),
+                        str(payload.get("confirmation", "")),
+                    ))
                 return self.send_json(404, {"error": "接口不存在"})
             except (ValueError, OSError) as error:
                 return self.send_json(400, {"error": str(error)})

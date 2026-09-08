@@ -1,5 +1,5 @@
 appname=meizang
-version=0.7.0
+version=0.8.0
 display_name=媒藏
 desc=运行在飞牛 fnOS 上的本地照片、视频与音乐索引、整理和查重工具。
 source=thirdparty

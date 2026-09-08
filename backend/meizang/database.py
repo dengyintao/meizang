@@ -234,7 +234,7 @@ class LibraryDatabase:
             ).fetchone()
             duplicate_groups = connection.execute(
                 "SELECT COUNT(*) FROM (SELECT 1 FROM media_assets "
-                "WHERE sha256 <> '' GROUP BY size, sha256 HAVING COUNT(*) > 1)"
+                "WHERE sha256 <> '' GROUP BY size, sha256 HAVING COUNT(DISTINCT path) > 1)"
             ).fetchone()[0]
         return {
             "total": totals["total"],
@@ -245,26 +245,52 @@ class LibraryDatabase:
 
     def duplicates(self) -> List[Dict[str, Any]]:
         with self.connect() as connection:
+            protected = {
+                row["library_path"] for row in connection.execute(
+                    "SELECT library_path FROM managed_links WHERE status <> 'removed'"
+                )
+            }
             groups = connection.execute(
-                "SELECT size, sha256, COUNT(*) AS count FROM media_assets "
-                "WHERE sha256 <> '' GROUP BY size, sha256 HAVING COUNT(*) > 1 "
-                "ORDER BY size * COUNT(*) DESC"
+                "SELECT size, sha256, COUNT(DISTINCT path) AS count FROM media_assets "
+                "WHERE sha256 <> '' GROUP BY size, sha256 HAVING COUNT(DISTINCT path) > 1 "
+                "ORDER BY size * COUNT(DISTINCT path) DESC"
             ).fetchall()
             result = []
             for group in groups:
                 files = connection.execute(
-                    "SELECT id, path, filename, media_type, size FROM media_assets "
-                    "WHERE size=? AND sha256=? ORDER BY path",
+                    "SELECT MIN(id) AS id, path, MIN(filename) AS filename, "
+                    "MIN(media_type) AS media_type, size, MIN(mtime_ns) AS mtime_ns "
+                    "FROM media_assets WHERE size=? AND sha256=? GROUP BY path ORDER BY path",
                     (group["size"], group["sha256"]),
                 ).fetchall()
+                file_items = []
+                for row in files:
+                    item = dict(row)
+                    item["protected"] = item["path"] in protected
+                    file_items.append(item)
+                protected_count = sum(1 for item in file_items if item["protected"])
+                removable_count = group["count"] - protected_count if protected_count else group["count"] - 1
                 result.append({
                     "size": group["size"],
                     "sha256": group["sha256"],
                     "count": group["count"],
-                    "reclaimable_bytes": group["size"] * (group["count"] - 1),
-                    "files": [dict(row) for row in files],
+                    "removable_count": max(0, removable_count),
+                    "reclaimable_bytes": group["size"] * max(0, removable_count),
+                    "files": file_items,
                 })
             return result
+
+    def protected_media_paths(self) -> set:
+        """Paths managed by qB must never be removed by duplicate cleanup."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT library_path FROM managed_links WHERE status <> 'removed'"
+            ).fetchall()
+        return {row["library_path"] for row in rows}
+
+    def delete_assets_by_path(self, path: str) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM media_assets WHERE path=?", (path,))
 
     @staticmethod
     def _mdc_job(row) -> Optional[Dict[str, Any]]:

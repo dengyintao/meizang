@@ -8,7 +8,8 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.7.0">
+  <link rel="stylesheet" href="provider.css?v=0.8.0">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.0">
   </head>
   <body>
     <div class="app-shell">
@@ -80,7 +81,7 @@
         </section>
 
         <section class="view" data-view="duplicates">
-          <div class="section-intro"><div><span class="kicker">SAFE REVIEW</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别。初版仅展示，不会删除任何文件。</p></div><strong id="reclaimable">0 B 可释放</strong></div>
+          <div class="section-intro"><div><span class="kicker">SAFE CLEANUP</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别；每组至少保留一份，qB 管理中的真实文件不会删除。</p></div><div class="duplicate-summary"><strong id="reclaimable">0 B 可释放</strong><button id="delete-all-duplicates" class="button danger" disabled>一键删除重复项</button></div></div>
           <div id="duplicate-list" class="duplicate-list"></div>
         </section>
 
@@ -196,6 +197,6 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.7.0"></script>
+    <script type="module" src="app.js?v=0.8.0"></script>
   </body>
 </html>

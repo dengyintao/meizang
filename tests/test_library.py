@@ -10,6 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from meizang.database import LibraryDatabase
+from meizang.duplicate_cleanup import CONFIRMATION, delete_duplicates
 from meizang.providers import ProviderPipeline
 from meizang.providers.base import merge_metadata
 from meizang.providers.local import FilenameProvider, NfoProvider
@@ -57,6 +58,70 @@ class LibraryTests(unittest.TestCase):
         fourth = scan_root(self.database, self.root_record["id"])
         self.assertEqual(fourth["removed"], 1)
         self.assertEqual(self.database.stats()["total"], 2)
+
+    def test_one_click_duplicate_cleanup_keeps_one_file(self):
+        content = b"identical-media"
+        first = self.root / "a.jpg"
+        second = self.root / "copies" / "second.jpg"
+        third = self.root / "copies" / "third.jpg"
+        second.parent.mkdir()
+        for path in (first, second, third):
+            path.write_bytes(content)
+        scan_root(self.database, self.root_record["id"])
+
+        result = delete_duplicates(
+            self.database, lambda _path: True, 1, CONFIRMATION
+        )
+
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["released_bytes"], len(content) * 2)
+        self.assertTrue(first.exists())
+        self.assertFalse(second.exists())
+        self.assertFalse(third.exists())
+        self.assertEqual(self.database.stats()["duplicate_groups"], 0)
+
+    def test_duplicate_cleanup_refuses_stale_list(self):
+        (self.root / "a.jpg").write_bytes(b"same")
+        (self.root / "b.jpg").write_bytes(b"same")
+        scan_root(self.database, self.root_record["id"])
+        with self.assertRaisesRegex(ValueError, "列表已经变化"):
+            delete_duplicates(self.database, lambda _path: True, 0, CONFIRMATION)
+        self.assertTrue((self.root / "a.jpg").exists())
+        self.assertTrue((self.root / "b.jpg").exists())
+
+    def test_duplicate_cleanup_skips_changed_and_qb_protected_files(self):
+        protected = self.root / "protected.jpg"
+        changed = self.root / "changed.jpg"
+        keeper = self.root / "keeper.jpg"
+        for path in (protected, changed, keeper):
+            path.write_bytes(b"same-media")
+        scan_root(self.database, self.root_record["id"])
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO managed_links(torrent_hash,source_path,library_path,status) VALUES(?,?,?,'active')",
+                ("hash", str(self.root / "qb-link.jpg"), str(protected)),
+            )
+        changed.write_bytes(b"new-content")
+
+        result = delete_duplicates(
+            self.database, lambda _path: True, 1, CONFIRMATION
+        )
+
+        self.assertTrue(protected.exists())
+        self.assertTrue(changed.exists())
+        self.assertFalse(keeper.exists())
+        self.assertEqual(result["deleted"], 1)
+        self.assertEqual(result["skipped"], 1)
+
+    def test_overlapping_roots_do_not_create_false_duplicate(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        (nested / "only.jpg").write_bytes(b"one-physical-file")
+        nested_record = self.database.add_root(str(nested), "嵌套目录")
+        scan_root(self.database, self.root_record["id"])
+        scan_root(self.database, nested_record["id"])
+        self.assertEqual(self.database.stats()["duplicate_groups"], 0)
+        self.assertEqual(self.database.duplicates(), [])
 
     def test_slow_hash_does_not_block_adding_a_root(self):
         (self.root / "slow.mkv").write_bytes(b"video")

@@ -1,7 +1,7 @@
 import { TrimApp } from './vendor/trim-web-app.js';
 
 const PREFIX = location.pathname.startsWith('/app/meizang') ? '/app/meizang' : '';
-const state = { type: 'all', query: '', roots: [], stats: null };
+const state = { type: 'all', query: '', roots: [], stats: null, duplicateGroups: [] };
 const trimSdk = new TrimApp();
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -96,11 +96,36 @@ async function loadAssets() {
 async function loadDuplicates() {
   const list = $('#duplicate-list');
   const groups = await api('/duplicates');
+  state.duplicateGroups = groups;
   const total = groups.reduce((sum, group) => sum + group.reclaimable_bytes, 0);
+  const removable = groups.reduce((sum, group) => sum + group.removable_count, 0);
   $('#reclaimable').textContent = `${formatBytes(total)} 可释放`;
+  $('#delete-all-duplicates').disabled = removable === 0;
   list.innerHTML = groups.length ? groups.map((group, index) => `
-    <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${index + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map(file => `<div class="duplicate-file">${escapeHtml(file.path)}</div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
+    <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${index + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map(file => `<div class="duplicate-file">${escapeHtml(file.path)}${file.protected ? '<b>qB 保护</b>' : ''}</div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
 }
+
+$('#delete-all-duplicates').addEventListener('click', async event => {
+  const groups = state.duplicateGroups;
+  const bytes = groups.reduce((sum, group) => sum + group.reclaimable_bytes, 0);
+  const count = groups.reduce((sum, group) => sum + group.removable_count, 0);
+  if (!count) return;
+  if (!window.confirm(`将永久删除 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组会保留至少一份，qB 保护文件不会删除。此操作无法撤销，是否继续？`)) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = '正在校验并删除…';
+  try {
+    const result = await api('/duplicates/delete', {method:'POST', body:JSON.stringify({expected_groups:groups.length, confirmation:'DELETE_DUPLICATES'})});
+    const message = `已删除 ${result.deleted} 个文件，释放 ${formatBytes(result.released_bytes)}${result.skipped ? `，跳过 ${result.skipped} 个已变化或受保护文件` : ''}`;
+    toast(message, result.skipped > 0);
+    await Promise.all([loadDuplicates(), loadStats(), loadAssets()]);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.textContent = '一键删除重复项';
+    button.disabled = state.duplicateGroups.reduce((sum, group) => sum + group.removable_count, 0) === 0;
+  }
+});
 
 async function startScan(rootId, button, forceMetadata = false) {
   const original = button?.textContent;
