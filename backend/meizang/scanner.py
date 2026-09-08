@@ -61,6 +61,7 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
         }
 
     pending = []
+    pending_hashes = []
 
     def flush_pending():
         if not pending:
@@ -127,20 +128,29 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
                 # minutes on a NAS and is only needed to finish duplicate detection.
                 flush_pending()
                 counters["updated" if old else "inserted"] += 1
-                digest = sha256_file(path)
-                final_stat = path.stat()
-                if final_stat.st_size != stat.st_size or final_stat.st_mtime_ns != stat.st_mtime_ns:
-                    raise OSError("文件在哈希期间发生变化")
-                queue_write(
-                    "UPDATE media_assets SET sha256=?,scan_token=?,updated_at=CURRENT_TIMESTAMP "
-                    "WHERE root_id=? AND path=? AND size=? AND mtime_ns=?",
-                    (digest, token, root_id, str(path), stat.st_size, stat.st_mtime_ns),
-                )
+                pending_hashes.append((path, stat.st_size, stat.st_mtime_ns))
             except (OSError, ValueError):
                 traversal_complete = False
                 counters["failed"] += 1
 
     flush_pending()
+    # Hash only after the discovery pass, so every media file appears in the UI
+    # before multi-gigabyte videos are read end-to-end for duplicate detection.
+    for path, expected_size, expected_mtime_ns in pending_hashes:
+        try:
+            digest = sha256_file(path)
+            final_stat = path.stat()
+            if final_stat.st_size != expected_size or final_stat.st_mtime_ns != expected_mtime_ns:
+                raise OSError("文件在哈希期间发生变化")
+            queue_write(
+                "UPDATE media_assets SET sha256=?,scan_token=?,updated_at=CURRENT_TIMESTAMP "
+                "WHERE root_id=? AND path=? AND size=? AND mtime_ns=?",
+                (digest, token, root_id, str(path), expected_size, expected_mtime_ns),
+            )
+            flush_pending()
+        except OSError:
+            counters["failed"] += 1
+
     with database.connect() as connection:
         if traversal_complete:
             counters["removed"] = connection.execute(
