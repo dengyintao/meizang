@@ -11,6 +11,91 @@
   object-fit: cover;
 }
 
+.asset-card {
+  cursor: pointer;
+}
+
+.asset-card:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 3px;
+}
+
+.preview-glyph {
+  position: absolute;
+  right: 10px;
+  top: 9px;
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(8, 13, 24, 0.72);
+  color: #fff;
+  font-size: 13px;
+  backdrop-filter: blur(8px);
+}
+
+.media-dialog {
+  width: min(94vw, 1080px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.media-dialog .dialog-close {
+  z-index: 2;
+  color: white;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
+}
+
+.media-stage {
+  min-height: min(70vh, 720px);
+  display: grid;
+  place-items: center;
+  background: #050810;
+}
+
+.media-stage video,
+.media-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+}
+
+.media-stage video {
+  width: 100%;
+}
+
+.audio-preview {
+  display: grid;
+  gap: 22px;
+  place-items: center;
+  width: min(90%, 620px);
+  color: var(--muted);
+  font-size: 58px;
+}
+
+.audio-preview audio {
+  width: 100%;
+}
+
+.media-caption {
+  display: grid;
+  gap: 5px;
+  padding: 14px 18px 17px;
+  border-top: 1px solid var(--line);
+}
+
+.media-caption strong {
+  font-size: 14px;
+}
+
+.media-caption span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .provider-badge {
   position: absolute;
   left: 10px;

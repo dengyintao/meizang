@@ -1,8 +1,10 @@
 import json
 import mimetypes
 import os
+import shutil
 import socket
 import socketserver
+import subprocess
 import threading
 import traceback
 import uuid
@@ -185,6 +187,8 @@ class MeizangApplication:
     def __init__(self, database_path: str, static_dir: str, prefix: str = "/app/meizang"):
         self.database = LibraryDatabase(database_path)
         self.static_dir = Path(static_dir).resolve()
+        self.data_dir = Path(database_path).expanduser().resolve().parent
+        self.thumbnail_dir = self.data_dir / "thumbnails"
         self.prefix = prefix.rstrip("/")
         self.jobs = ScanJobs(self.database)
         raw_paths = os.environ.get("TRIM_DATA_ACCESSIBLE_PATHS", "")
@@ -233,6 +237,53 @@ class MeizangApplication:
             raise ValueError("目录没有写入权限")
         return path
 
+    def resolve_asset_file(self, asset_id: int) -> Dict[str, Any]:
+        asset = self.database.asset(asset_id)
+        if not asset:
+            raise FileNotFoundError("媒体文件不存在")
+        path = Path(asset["path"]).resolve()
+        if not path.is_file():
+            raise FileNotFoundError("媒体文件已不在原位置")
+        if not self.is_authorized_path(path):
+            raise PermissionError("该媒体文件尚未授权访问")
+        asset["file_path"] = path
+        return asset
+
+    def thumbnail_path(self, asset: Dict[str, Any]) -> Path:
+        return self.thumbnail_dir / "{}.jpg".format(asset["id"])
+
+    def ensure_thumbnail(self, asset: Dict[str, Any]) -> Path:
+        source = Path(asset["path"]).resolve()
+        if asset["media_type"] == "image":
+            return source
+        if asset["media_type"] != "video":
+            raise ValueError("该媒体类型没有缩略图")
+        target = self.thumbnail_path(asset)
+        if target.is_file() and target.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+            return target
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise FileNotFoundError("系统未找到 ffmpeg，无法生成视频预览图")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".tmp.jpg")
+        try:
+            subprocess.run(
+                [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", "00:00:03", "-i", str(source),
+                    "-frames:v", "1", "-vf", "scale=640:-2", str(temporary),
+                ],
+                check=True,
+                timeout=45,
+            )
+            temporary.replace(target)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        return target
+
 
 def make_handler(application: MeizangApplication):
     class Handler(BaseHTTPRequestHandler):
@@ -249,6 +300,55 @@ def make_handler(application: MeizangApplication):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def send_file(self, candidate: Path, download_name: str = "", inline: bool = True):
+            mime = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+            size = candidate.stat().st_size
+            start, end = 0, size - 1
+            status = 200
+            range_header = self.headers.get("Range", "")
+            if range_header.startswith("bytes="):
+                requested = range_header[6:].split(",", 1)[0]
+                left, _dash, right = requested.partition("-")
+                try:
+                    if left:
+                        start = int(left)
+                        end = int(right) if right else end
+                    elif right:
+                        start = max(0, size - int(right))
+                    if start < 0 or end < start or start >= size:
+                        self.send_response(416)
+                        self.send_header("Content-Range", "bytes */{}".format(size))
+                        self.end_headers()
+                        return
+                    end = min(end, size - 1)
+                    status = 206
+                except ValueError:
+                    start, end = 0, size - 1
+            length = max(0, end - start + 1)
+            self.send_response(status)
+            self.send_header("Content-Type", mime)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            if status == 206:
+                self.send_header("Content-Range", "bytes {}-{}/{}".format(start, end, size))
+            if download_name:
+                disposition = "inline" if inline else "attachment"
+                self.send_header(
+                    "Content-Disposition",
+                    '{}; filename="{}"'.format(disposition, download_name.replace('"', "")),
+                )
+            self.end_headers()
+            with candidate.open("rb") as stream:
+                stream.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = stream.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
 
         def body_json(self) -> Dict[str, Any]:
             try:
@@ -299,6 +399,15 @@ def make_handler(application: MeizangApplication):
                         int(query.get("limit", ["200"])[0]),
                     )
                     return self.send_json(200, items)
+                if path.startswith("/api/assets/") and path.endswith("/file"):
+                    asset_id = int(path.split("/")[-2])
+                    asset = application.resolve_asset_file(asset_id)
+                    return self.send_file(asset["file_path"], asset["filename"], inline=True)
+                if path.startswith("/api/assets/") and path.endswith("/thumbnail"):
+                    asset_id = int(path.split("/")[-2])
+                    asset = application.resolve_asset_file(asset_id)
+                    thumbnail = application.ensure_thumbnail(asset)
+                    return self.send_file(thumbnail, "{}.jpg".format(asset["id"]))
                 if path == '/api/qbittorrent/links':
                     return self.send_json(200, [{key: row[key] for key in ('source_path', 'library_path', 'status', 'message')} for row in application.database.managed_links()[:100]])
                 if path == "/api/duplicates":

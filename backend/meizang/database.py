@@ -221,6 +221,25 @@ class LibraryDatabase:
             result.append(item)
         return result
 
+    def asset(self, asset_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT id, root_id, path, relative_path, filename, extension, "
+                "media_type, size, mtime_ns, sha256, title, year, duration, "
+                "width, height, codec, metadata_json, created_at, updated_at "
+                "FROM media_assets WHERE id = ?",
+                (asset_id,),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        try:
+            item["metadata"] = json.loads(item.pop("metadata_json"))
+        except (TypeError, json.JSONDecodeError):
+            item["metadata"] = {}
+            item.pop("metadata_json", None)
+        return item
+
     def stats(self) -> Dict[str, Any]:
         with self.connect() as connection:
             counts = {

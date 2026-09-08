@@ -42,6 +42,18 @@ function safeImageUrl(value) {
   } catch (_error) { return ''; }
 }
 
+function assetFileUrl(asset) {
+  return `${PREFIX}/api/assets/${asset.id}/file`;
+}
+
+function assetThumbnailUrl(asset) {
+  const metadata = asset.metadata || {};
+  const poster = safeImageUrl(metadata.poster_url);
+  if (poster) return poster;
+  if (asset.media_type === 'image' || asset.media_type === 'video') return `${PREFIX}/api/assets/${asset.id}/thumbnail`;
+  return '';
+}
+
 async function loadHealth() {
   try {
     const health = await api('/health');
@@ -87,10 +99,41 @@ async function loadAssets() {
   const icons = { image: '▧', video: '▶', audio: '♫', other: '◇' };
   grid.innerHTML = assets.map(asset => {
     const metadata = asset.metadata || {};
-    const poster = safeImageUrl(metadata.poster_url);
+    const poster = assetThumbnailUrl(asset);
     const details = [asset.year, metadata.genres?.slice(0, 2).join(' / ')].filter(Boolean).join(' · ');
-    return `<article class="asset-card"><div class="asset-preview">${poster ? `<img src="${poster}" loading="lazy" alt="">` : icons[asset.media_type] || '◇'}${metadata.provider ? `<span class="provider-badge">${escapeHtml(metadata.provider.toUpperCase())}</span>` : ''}</div><div class="asset-card-body"><strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.title || asset.filename)}</strong><p title="${escapeHtml(metadata.plot || asset.relative_path)}">${escapeHtml(details || asset.relative_path)}</p><div class="asset-meta"><span>${escapeHtml(asset.extension.replace('.', '').toUpperCase())}${asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span><span>${formatBytes(asset.size)}</span></div></div></article>`;
+    return `<article class="asset-card" tabindex="0" role="button" data-asset-id="${asset.id}"><div class="asset-preview">${poster ? `<img src="${poster}" loading="lazy" alt="" onerror="this.remove()">` : ''}<span class="preview-glyph">${icons[asset.media_type] || '◇'}</span>${metadata.provider ? `<span class="provider-badge">${escapeHtml(metadata.provider.toUpperCase())}</span>` : ''}</div><div class="asset-card-body"><strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.title || asset.filename)}</strong><p title="${escapeHtml(metadata.plot || asset.relative_path)}">${escapeHtml(details || asset.relative_path)}</p><div class="asset-meta"><span>${escapeHtml(asset.extension.replace('.', '').toUpperCase())}${asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span><span>${formatBytes(asset.size)}</span></div></div></article>`;
   }).join('');
+  const byId = new Map(assets.map(asset => [String(asset.id), asset]));
+  $$('.asset-card').forEach(card => {
+    const open = () => showAssetPreview(byId.get(card.dataset.assetId));
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+}
+
+function showAssetPreview(asset) {
+  if (!asset) return;
+  const previewDialog = $('#asset-preview-dialog');
+  const stage = $('#asset-preview-stage');
+  $('#asset-preview-title').textContent = asset.title || asset.filename;
+  $('#asset-preview-path').textContent = asset.relative_path;
+  const url = assetFileUrl(asset);
+  if (asset.media_type === 'video') {
+    stage.innerHTML = `<video controls preload="metadata" src="${url}"></video>`;
+  } else if (asset.media_type === 'audio') {
+    stage.innerHTML = `<div class="audio-preview">♫<audio controls preload="metadata" src="${url}"></audio></div>`;
+  } else if (asset.media_type === 'image') {
+    stage.innerHTML = `<img src="${url}" alt="">`;
+  } else {
+    window.open(url, '_blank');
+    return;
+  }
+  previewDialog.showModal();
 }
 
 async function loadDuplicates() {
@@ -319,8 +362,10 @@ async function chooseRoot() {
 
 $('#open-add-root').addEventListener('click', chooseRoot);
 $('#open-manual-root').addEventListener('click', () => dialog.showModal());
-$('.dialog-close').addEventListener('click', () => dialog.close());
+$('#add-root-dialog .dialog-close').addEventListener('click', () => dialog.close());
 $('.dialog-actions .cancel').addEventListener('click', () => dialog.close());
+$('#asset-preview-dialog .dialog-close').addEventListener('click', () => $('#asset-preview-dialog').close());
+$('#asset-preview-dialog').addEventListener('close', () => $('#asset-preview-stage').innerHTML = '');
 $('#add-root-form').addEventListener('submit', async event => {
   event.preventDefault();
   const submit = event.submitter;

@@ -8,8 +8,8 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.8.2">
-  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.2">
+  <link rel="stylesheet" href="provider.css?v=0.8.3">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.3">
   </head>
   <body>
     <div class="app-shell">
@@ -196,7 +196,15 @@
         <div class="dialog-actions"><button type="button" class="button cancel">取消</button><button class="button primary" type="submit">添加并扫描</button></div>
       </form>
     </dialog>
+    <dialog id="asset-preview-dialog" class="media-dialog">
+      <button type="button" class="dialog-close" aria-label="关闭">×</button>
+      <div class="media-stage" id="asset-preview-stage"></div>
+      <div class="media-caption">
+        <strong id="asset-preview-title"></strong>
+        <span id="asset-preview-path"></span>
+      </div>
+    </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.8.2"></script>
+    <script type="module" src="app.js?v=0.8.3"></script>
   </body>
 </html>

@@ -205,6 +205,38 @@ class LibraryTests(unittest.TestCase):
             with patch.dict(os.environ, {"TRIM_API_TOKEN": "test-token"}):
                 self.assertEqual(app.normalize_root(str(self.root)), self.root.resolve())
 
+    def test_asset_file_resolution_and_image_thumbnail_are_authorized(self):
+        photo = self.root / "photo.jpg"
+        photo.write_bytes(b"photo")
+        scan_root(self.database, self.root_record["id"])
+        asset = self.database.assets(media_type="image")[0]
+        app = MeizangApplication(
+            self.database.path,
+            str(Path(__file__).resolve().parents[1] / "frontend"),
+        )
+        app.allowed_paths = [self.root.resolve()]
+        app.enforce_allowed_paths = True
+
+        resolved = app.resolve_asset_file(asset["id"])
+
+        self.assertEqual(resolved["file_path"], photo.resolve())
+        self.assertEqual(app.ensure_thumbnail(resolved), photo.resolve())
+
+    def test_asset_file_resolution_rejects_ungranted_media(self):
+        photo = self.root / "private.jpg"
+        photo.write_bytes(b"photo")
+        scan_root(self.database, self.root_record["id"])
+        asset = self.database.assets(media_type="image")[0]
+        app = MeizangApplication(
+            self.database.path,
+            str(Path(__file__).resolve().parents[1] / "frontend"),
+        )
+        app.allowed_paths = [Path(self.temporary.name, "other").resolve()]
+        app.enforce_allowed_paths = True
+
+        with self.assertRaisesRegex(PermissionError, "尚未授权"):
+            app.resolve_asset_file(asset["id"])
+
     def test_provider_settings_are_persisted(self):
         settings = self.database.update_settings({
             "tmdb_enabled": "true",
