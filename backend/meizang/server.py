@@ -19,6 +19,7 @@ from .duplicate_cleanup import delete_duplicates
 from .fnos_api import shared_accessible_folders
 from .mdc_bridge import MDCManager
 from .organizer import QBIntegration
+from .providers.local import media_tool_env
 from .providers.tmdb import TMDBProvider
 from .qbittorrent import validate_qb_url
 from .scanner import scan_root
@@ -274,9 +275,12 @@ class MeizangApplication:
                     "-frames:v", "1", "-vf", "scale=640:-2", str(temporary),
                 ],
                 check=True,
+                env=media_tool_env(),
                 timeout=45,
             )
             temporary.replace(target)
+        except (subprocess.SubprocessError, OSError) as error:
+            raise FileNotFoundError("视频预览图生成失败：{}".format(error)) from error
         finally:
             try:
                 temporary.unlink()

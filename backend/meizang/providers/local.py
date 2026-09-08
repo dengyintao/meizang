@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,15 @@ from .base import Metadata, MetadataProvider
 
 
 YEAR_PATTERN = re.compile(r"(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)")
+
+
+def media_tool_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    library_paths = ["/usr/lib/x86_64-linux-gnu"]
+    if env.get("LD_LIBRARY_PATH"):
+        library_paths.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(library_paths)
+    return env
 
 
 class FilenameProvider(MetadataProvider):
@@ -44,7 +54,7 @@ class FFprobeProvider(MetadataProvider):
             "format=duration,bit_rate:format_tags=title,date,creation_time:stream=index,codec_type,codec_name,width,height,channels,sample_rate",
             "-of", "json", str(path),
         ]
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True)
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True, env=media_tool_env())
         probe = json.loads(completed.stdout or "{}")
         result: Metadata = {"technical": probe}
         format_info = probe.get("format", {})
