@@ -18,6 +18,7 @@ from .database import LibraryDatabase
 from .duplicate_cleanup import delete_duplicate_file, delete_duplicates
 from .fnos_api import shared_accessible_folders
 from .mdc_bridge import MDCManager
+from .music import MusicJobs
 from .organizer import QBIntegration
 from .providers.local import media_tool_env
 from .providers.tmdb import TMDBProvider
@@ -69,6 +70,16 @@ def public_qb_settings(settings: Dict[str, str], stats: Dict[str, int]) -> Dict[
         "last_sync_status": settings["qb_last_sync_status"],
         "last_sync_message": settings["qb_last_sync_message"],
         "links": stats,
+    }
+
+
+def public_music_settings(settings: Dict[str, str]) -> Dict[str, Any]:
+    return {
+        "enabled": settings["musicbrainz_enabled"] == "true",
+        "library_root": settings["music_library_root"],
+        "write_tags": settings["music_write_tags"] == "true",
+        "download_cover": settings["music_download_cover"] == "true",
+        "move_files": settings["music_move_files"] == "true",
     }
 
 
@@ -248,6 +259,7 @@ class MeizangApplication:
         )
         self.qb = QBIntegration(self.database, self.is_authorized_path)
         self.duplicate_jobs = DuplicateCleanupJobs(self.database, self.is_authorized_path)
+        self.music = MusicJobs(self.database, self.is_authorized_path, self.normalize_writable_directory)
         self.mdc = MDCManager(
             self.database, self.normalize_root, self.is_authorized_path,
             on_complete=lambda root_id: self.jobs.start(root_id, force_metadata=True),
@@ -440,6 +452,11 @@ def make_handler(application: MeizangApplication):
                     ))
                 if path == "/api/settings/mdc":
                     return self.send_json(200, application.mdc.config.public())
+                if path == "/api/settings/music":
+                    return self.send_json(200, public_music_settings(application.database.settings()))
+                if path.startswith("/api/music/jobs/"):
+                    job = application.music.get(path.rsplit("/", 1)[-1])
+                    return self.send_json(200, job) if job else self.send_json(404, {"error": "音乐任务不存在"})
                 if path == "/api/mdc/jobs":
                     return self.send_json(200, application.database.mdc_jobs(int(query.get("limit", ["50"])[0])))
                 if path.startswith("/api/mdc/jobs/"):
@@ -520,6 +537,9 @@ def make_handler(application: MeizangApplication):
                 if path == "/api/mdc/jobs":
                     application.refresh_allowed_paths()
                     return self.send_json(202, application.mdc.submit(payload))
+                if path == "/api/music/jobs":
+                    application.refresh_allowed_paths()
+                    return self.send_json(202, application.music.start(int(payload.get("root_id", 0)), payload))
                 if path == "/api/settings/mdc/reset":
                     return self.send_json(200, application.mdc.config.reset())
                 if path.startswith("/api/mdc/jobs/") and path.endswith("/cancel"):
@@ -563,6 +583,18 @@ def make_handler(application: MeizangApplication):
             try:
                 path, _query = self.route_path()
                 payload = self.body_json()
+                if path == "/api/settings/music":
+                    library_root = str(payload.get("library_root", "")).strip()
+                    if payload.get("move_files"):
+                        library_root = str(application.normalize_writable_directory(library_root))
+                    settings = application.database.update_settings({
+                        "musicbrainz_enabled": "true" if payload.get("enabled", True) else "false",
+                        "music_library_root": library_root,
+                        "music_write_tags": "true" if payload.get("write_tags") else "false",
+                        "music_download_cover": "true" if payload.get("download_cover") else "false",
+                        "music_move_files": "true" if payload.get("move_files") else "false",
+                    })
+                    return self.send_json(200, public_music_settings(settings))
                 if path == "/api/settings/qbittorrent":
                     current = application.database.settings()
                     settings = effective_qb_settings(current, payload)

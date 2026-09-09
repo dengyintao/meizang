@@ -367,7 +367,7 @@ async function pollScan(jobId) {
 
 function route() {
   const name = location.hash.slice(1) || 'overview';
-  const titles = { overview: '媒体概览', library: '媒体库', scraping: '影片刮削', duplicates: '重复文件', settings: '目录设置' };
+  const titles = { overview: '媒体概览', library: '媒体库', scraping: '影片刮削', music: '音乐整理', duplicates: '重复文件', settings: '目录设置' };
   const target = titles[name] ? name : 'overview';
   $$('.view').forEach(view => view.classList.toggle('active', view.dataset.view === target));
   $$('.nav a').forEach(link => link.classList.toggle('active', link.dataset.route === target));
@@ -375,6 +375,7 @@ function route() {
   if (target === 'library') loadAssets().catch(error => toast(error.message, true));
   if (target === 'duplicates') loadDuplicates().catch(error => toast(error.message, true));
   if (target === 'scraping') loadMDC().catch(error => toast(error.message, true));
+  if (target === 'music') loadMusicSettings().catch(error => toast(error.message, true));
 }
 
 const dialog = $('#add-root-dialog');
@@ -537,6 +538,64 @@ for (const action of ['test', 'sync']) {
     finally { button.disabled = false; }
   });
 }
+
+async function loadMusicSettings() {
+  const settings = await api('/settings/music');
+  $('#music-root').innerHTML = state.roots.length
+    ? state.roots.map(root => `<option value="${root.id}">${escapeHtml(root.label || root.path)} · ${escapeHtml(root.path)}</option>`).join('')
+    : '<option value="">请先添加并扫描音乐目录</option>';
+  $('#music-write-tags').checked = settings.write_tags;
+  $('#music-cover').checked = settings.download_cover;
+  $('#music-move').checked = settings.move_files;
+  $('#music-library-root').value = settings.library_root || '';
+  $('#music-library-setting').hidden = !settings.move_files;
+}
+
+function renderMusicJob(job) {
+  const percent = job.total ? Math.round(job.progress / job.total * 100) : 0;
+  $('#music-job').className = 'music-job-card';
+  $('#music-job').innerHTML = `<div class="music-progress"><span style="width:${percent}%"></span></div><strong>${escapeHtml(job.message || '处理中')}</strong><p>${job.progress}/${job.total} · 匹配 ${job.matched} · 整理 ${job.organized} · 跳过 ${job.failed}</p>`;
+  const errors = job.errors || [];
+  const panel = $('#music-errors');
+  panel.hidden = !errors.length;
+  panel.innerHTML = errors.length ? `<strong>未处理的文件与原因</strong><ul>${errors.map(item => `<li>${escapeHtml(item.path)}<br>${escapeHtml(item.reason)}</li>`).join('')}</ul>` : '';
+}
+
+async function pollMusicJob(job) {
+  let current = job;
+  while (current.status === 'running') {
+    renderMusicJob(current);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    current = await api(`/music/jobs/${current.id}`);
+  }
+  renderMusicJob(current);
+  await Promise.all([loadStats(), loadRoots(), loadAssets()]);
+  toast(`音乐任务完成：匹配 ${current.matched}，整理 ${current.organized}，跳过 ${current.failed}`, current.failed > 0);
+}
+
+$('#music-move').addEventListener('change', event => { $('#music-library-setting').hidden = !event.target.checked; });
+
+$('#music-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter;
+  const payload = {
+    root_id: Number($('#music-root').value),
+    write_tags: $('#music-write-tags').checked,
+    download_cover: $('#music-cover').checked,
+    move_files: $('#music-move').checked,
+    library_root: $('#music-library-root').value.trim(),
+  };
+  if (!payload.root_id) return toast('请先选择音乐来源目录', true);
+  if (payload.move_files && !payload.library_root) return toast('请选择整理后的音乐库目录', true);
+  button.disabled = true;
+  try {
+    await api('/settings/music', {method:'PUT', body:JSON.stringify({...payload, enabled:true})});
+    const job = await api('/music/jobs', {method:'POST', body:JSON.stringify(payload)});
+    await pollMusicJob(job);
+  } catch (error) {
+    toast(error.message, true);
+  } finally { button.disabled = false; }
+});
 
 $$('.path-picker').forEach(button => button.addEventListener('click', async () => {
   const target = button.dataset.target;

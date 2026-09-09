@@ -15,7 +15,7 @@ from meizang.duplicate_cleanup import (
 )
 from meizang.providers import ProviderPipeline
 from meizang.providers.base import merge_metadata
-from meizang.providers.local import FilenameProvider, NfoProvider
+from meizang.providers.local import FilenameProvider, MusicSidecarProvider, NfoProvider
 from meizang.providers.tmdb import TMDBProvider
 from meizang.scanner import media_type, scan_root
 from meizang.server import MeizangApplication, public_provider_settings, validate_proxy_url
@@ -37,6 +37,16 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(media_type(Path("movie.MKV")), "video")
         self.assertEqual(media_type(Path("song.FLAC")), "audio")
         self.assertEqual(media_type(Path("notes.txt")), "other")
+
+    def test_music_sidecar_metadata_is_loaded(self):
+        audio = self.root / "song.flac"
+        audio.write_bytes(b"audio")
+        audio.with_suffix(".flac.music.json").write_text(
+            json.dumps({"title": "歌曲", "artist": "歌手", "album": "专辑"}), encoding="utf-8",
+        )
+        metadata = MusicSidecarProvider().fetch(audio, "audio", {})
+        self.assertEqual(metadata["artist"], "歌手")
+        self.assertEqual(metadata["album"], "专辑")
 
     def test_incremental_scan_and_duplicates(self):
         content = b"same-image-content"

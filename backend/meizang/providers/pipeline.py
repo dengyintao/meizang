@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from .base import Metadata, MetadataProvider, merge_metadata
-from .local import FFprobeProvider, FilenameProvider, NfoProvider
+from .local import FFprobeProvider, FilenameProvider, MusicSidecarProvider, NfoProvider
 from .tmdb import TMDBProvider
 
 
@@ -12,7 +12,7 @@ class ProviderPipeline:
 
     @classmethod
     def from_settings(cls, settings: Dict[str, str]):
-        providers: List[MetadataProvider] = [FilenameProvider(), FFprobeProvider(), NfoProvider()]
+        providers: List[MetadataProvider] = [FilenameProvider(), FFprobeProvider(), MusicSidecarProvider(), NfoProvider()]
         if settings.get("tmdb_enabled") == "true" and settings.get("tmdb_token"):
             proxy_url = settings.get("proxy_url", "") if settings.get("proxy_enabled") == "true" else ""
             providers.append(TMDBProvider(

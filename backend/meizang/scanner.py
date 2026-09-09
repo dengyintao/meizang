@@ -95,7 +95,7 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
                 old = existing.get(str(path))
                 same_identity = old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns
                 fully_indexed = same_identity and bool(old["sha256"])
-                if fully_indexed and not (force_metadata and kind == "video"):
+                if fully_indexed and not force_metadata:
                     queue_write("UPDATE media_assets SET scan_token=? WHERE id=?", (token, old["id"]))
                     counters["unchanged"] += 1
                     continue

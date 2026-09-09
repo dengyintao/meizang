@@ -296,3 +296,25 @@
 
 @media(max-width:1050px){.mdc-mode-picker{grid-template-columns:1fr}.mdc-mode-card{min-height:0}.mdc-task-advanced .provider-fields{grid-template-columns:1fr}}
 @media(max-width:620px){.mdc-ready-status{display:none}.mdc-start-panel,.mdc-automation-panel{padding:20px}.mdc-start-action{align-items:stretch;flex-direction:column}.mdc-start-action .button{width:100%}}
+
+.music-open-badge { padding:8px 12px; border-radius:999px; border:1px solid rgba(52,212,227,.25); background:rgba(52,212,227,.07); color:var(--cyan); font-size:11px; white-space:nowrap; }
+.music-layout { display:grid; grid-template-columns:1.45fr 1fr; gap:18px; }
+.music-run-panel,.music-progress-panel { padding:30px; }
+.music-option-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:18px 0; }
+.music-option { display:flex; align-items:flex-start; gap:10px; min-height:118px; padding:16px; border:1px solid var(--line); border-radius:13px; background:rgba(8,13,24,.4); cursor:pointer; }
+.music-option:has(input:checked) { border-color:rgba(52,212,227,.48); background:rgba(52,212,227,.06); }
+.music-option input { width:18px; height:18px; margin-top:1px; accent-color:var(--cyan); }
+.music-option span,.music-option strong,.music-option small { display:block; }
+.music-option strong { margin-bottom:7px; font-size:12px; }
+.music-option small { color:var(--muted); font-size:10px; line-height:1.55; }
+.music-safety { margin:18px 0; padding:15px; border:1px solid rgba(185,237,104,.16); border-radius:12px; background:rgba(185,237,104,.045); }
+.music-safety strong { color:var(--lime); font-size:12px; }
+.music-safety p { margin:6px 0 0; color:var(--muted); font-size:11px; line-height:1.6; }
+.music-job-card { display:grid; gap:10px; }
+.music-job-card strong { font-size:14px; }
+.music-job-card p { margin:0; color:var(--muted); font-size:11px; }
+.music-progress { height:8px; overflow:hidden; border-radius:999px; background:var(--surface-2); }
+.music-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--cyan),var(--lime)); transition:width .3s; }
+#music-errors { margin-top:18px; max-height:430px; overflow:auto; }
+@media(max-width:1000px){.music-layout{grid-template-columns:1fr}.music-option-grid{grid-template-columns:1fr}}
+@media(max-width:620px){.music-open-badge{display:none}.music-run-panel,.music-progress-panel{padding:20px}}

@@ -114,6 +114,11 @@ DEFAULT_SETTINGS = {
     "qb_last_sync_status": "never",
     "qb_last_sync_message": "",
     "mdc_config_ini": "",
+    "musicbrainz_enabled": "true",
+    "music_library_root": "",
+    "music_write_tags": "true",
+    "music_download_cover": "true",
+    "music_move_files": "false",
 }
 
 
@@ -239,6 +244,13 @@ class LibraryDatabase:
             item["metadata"] = {}
             item.pop("metadata_json", None)
         return item
+
+    def audio_assets(self, root_id: int) -> List[Dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM media_assets WHERE root_id=? AND media_type='audio' ORDER BY path", (root_id,)
+            ).fetchall()
+        return [item for row in rows if (item := self.asset(row["id"]))]
 
     def stats(self) -> Dict[str, Any]:
         with self.connect() as connection:

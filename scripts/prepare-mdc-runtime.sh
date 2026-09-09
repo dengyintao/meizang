@@ -12,7 +12,10 @@ if ! ls "${WHEEL_CACHE}"/lxml-*-cp312-*x86_64.whl >/dev/null 2>&1; then
     --platform manylinux2014_x86_64 --python-version 312 --implementation cp --abi cp312 \
     --only-binary=:all: requests dlib-bin click numpy face-recognition-models lxml \
     beautifulsoup4 pillow==10.3.0 cloudscraper pysocks==1.7.1 urllib3==1.26.19 \
-    certifi MechanicalSoup opencc-python-reimplemented coloredlogs concurrent-log-handler
+    certifi MechanicalSoup opencc-python-reimplemented coloredlogs concurrent-log-handler mutagen==1.47.0
+fi
+if ! ls "${WHEEL_CACHE}"/mutagen-1.47.0-*.whl >/dev/null 2>&1; then
+  python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --only-binary=:all: mutagen==1.47.0
 fi
 if ! ls "${WHEEL_CACHE}"/face_recognition-*.whl >/dev/null 2>&1; then
   python3 -m pip download --dest "${WHEEL_CACHE}" --no-deps --only-binary=:all: face-recognition==1.3.0

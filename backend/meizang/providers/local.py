@@ -52,7 +52,7 @@ class FFprobeProvider(MetadataProvider):
     def fetch(self, path: Path, media_type: str, current: Metadata) -> Metadata:
         command = [
             shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
-            "format=duration,bit_rate:format_tags=title,date,creation_time:stream=index,codec_type,codec_name,width,height,channels,sample_rate",
+            "format=duration,bit_rate:format_tags=title,artist,album,album_artist,date,creation_time,track,disc,genre:stream=index,codec_type,codec_name,width,height,channels,sample_rate",
             "-of", "json", str(path),
         ]
         completed = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True, env=media_tool_env())
@@ -60,8 +60,14 @@ class FFprobeProvider(MetadataProvider):
         result: Metadata = {"technical": probe}
         format_info = probe.get("format", {})
         tags = format_info.get("tags", {}) or {}
+        tags = {str(key).lower(): value for key, value in tags.items()}
         if tags.get("title"):
             result["title"] = tags["title"]
+        for source, target in (("artist", "artist"), ("album_artist", "album_artist"), ("album", "album"), ("genre", "genres"), ("track", "track"), ("disc", "disc")):
+            if tags.get(source):
+                result[target] = [tags[source]] if target == "genres" else tags[source]
+        if tags.get("date"):
+            result["release_date"] = tags["date"]
         try:
             result["duration"] = float(format_info.get("duration"))
         except (TypeError, ValueError):
@@ -72,6 +78,19 @@ class FFprobeProvider(MetadataProvider):
                 break
             if stream.get("codec_type") == "audio" and not result.get("codec"):
                 result["codec"] = stream.get("codec_name", "")
+        return result
+
+
+class MusicSidecarProvider(MetadataProvider):
+    name = "musicbrainz"
+
+    def supports(self, path: Path, media_type: str) -> bool:
+        return media_type == "audio" and path.with_suffix(path.suffix + ".music.json").is_file()
+
+    def fetch(self, path: Path, media_type: str, current: Metadata) -> Metadata:
+        sidecar = path.with_suffix(path.suffix + ".music.json")
+        result = json.loads(sidecar.read_text(encoding="utf-8"))
+        result["music_sidecar"] = str(sidecar)
         return result
 
 
