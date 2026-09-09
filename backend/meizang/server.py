@@ -184,6 +184,53 @@ class ScanJobs:
             return dict(job) if job else None
 
 
+class DuplicateCleanupJobs:
+    def __init__(self, database: LibraryDatabase, authorize_path):
+        self.database = database
+        self.authorize_path = authorize_path
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.active_id = ""
+        self.lock = threading.Lock()
+
+    def start(self, expected_groups: int, confirmation: str) -> Dict[str, Any]:
+        if confirmation != "DELETE_DUPLICATES":
+            raise ValueError("缺少重复文件删除确认")
+        with self.lock:
+            if self.active_id and self.jobs.get(self.active_id, {}).get("status") == "running":
+                return dict(self.jobs[self.active_id])
+            job_id = uuid.uuid4().hex
+            job = {
+                "id": job_id, "status": "running", "processed_groups": 0,
+                "total_groups": expected_groups, "deleted": 0, "skipped": 0,
+                "result": None, "error": "",
+            }
+            self.jobs[job_id] = job
+            self.active_id = job_id
+        threading.Thread(
+            target=self._run, args=(job_id, expected_groups, confirmation), daemon=True,
+        ).start()
+        return dict(job)
+
+    def _run(self, job_id: str, expected_groups: int, confirmation: str) -> None:
+        def progress(values: Dict[str, int]) -> None:
+            with self.lock:
+                self.jobs[job_id].update(values)
+        try:
+            result = delete_duplicates(
+                self.database, self.authorize_path, expected_groups, confirmation, progress,
+            )
+            with self.lock:
+                self.jobs[job_id].update(status="completed", result=result)
+        except Exception as error:
+            with self.lock:
+                self.jobs[job_id].update(status="failed", error=str(error))
+
+    def get(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            return dict(job) if job else None
+
+
 class MeizangApplication:
     def __init__(self, database_path: str, static_dir: str, prefix: str = "/app/meizang"):
         self.database = LibraryDatabase(database_path)
@@ -198,6 +245,7 @@ class MeizangApplication:
             os.environ.get("TRIM_API_TOKEN", "").strip()
         )
         self.qb = QBIntegration(self.database, self.is_authorized_path)
+        self.duplicate_jobs = DuplicateCleanupJobs(self.database, self.is_authorized_path)
         self.mdc = MDCManager(
             self.database, self.normalize_root, self.is_authorized_path,
             on_complete=lambda root_id: self.jobs.start(root_id, force_metadata=True),
@@ -416,6 +464,9 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(200, [{key: row[key] for key in ('source_path', 'library_path', 'status', 'message')} for row in application.database.managed_links()[:100]])
                 if path == "/api/duplicates":
                     return self.send_json(200, application.database.duplicates())
+                if path.startswith("/api/duplicates/delete/"):
+                    job = application.duplicate_jobs.get(path.rsplit("/", 1)[-1])
+                    return self.send_json(200, job) if job else self.send_json(404, {"error": "删除任务不存在"})
                 if path.startswith("/api/scans/"):
                     job = application.jobs.get(path.rsplit("/", 1)[-1])
                     return self.send_json(200, job) if job else self.send_json(404, {"error": "扫描任务不存在"})
@@ -484,9 +535,7 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(202, application.jobs.start(root_id, payload.get("force_metadata") is True))
                 if path == "/api/duplicates/delete":
                     application.refresh_allowed_paths()
-                    return self.send_json(200, delete_duplicates(
-                        application.database,
-                        application.is_authorized_path,
+                    return self.send_json(202, application.duplicate_jobs.start(
                         int(payload.get("expected_groups", -1)),
                         str(payload.get("confirmation", "")),
                     ))

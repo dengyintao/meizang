@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from .database import LibraryDatabase
 from .scanner import sha256_file
@@ -14,6 +14,7 @@ def delete_duplicates(
     authorize_path: Callable[[Path], bool],
     expected_groups: int,
     confirmation: str,
+    on_progress: Optional[Callable[[Dict[str, int]], None]] = None,
 ) -> Dict[str, Any]:
     if confirmation != CONFIRMATION:
         raise ValueError("缺少重复文件删除确认")
@@ -31,7 +32,7 @@ def delete_duplicates(
         "errors": [],
     }
 
-    for group in groups:
+    for index, group in enumerate(groups, 1):
         files = group["files"]
         keepers = [item for item in files if item["path"] in protected]
         keeper = keepers[0] if keepers else min(
@@ -50,6 +51,13 @@ def delete_duplicates(
         except OSError as error:
             result["skipped"] += max(0, len(files) - 1)
             result["errors"].append({"path": str(keeper_path), "reason": str(error)})
+            if on_progress:
+                on_progress({
+                    "processed_groups": index,
+                    "total_groups": len(groups),
+                    "deleted": result["deleted"],
+                    "skipped": result["skipped"],
+                })
             continue
 
         for item in files:
@@ -75,5 +83,13 @@ def delete_duplicates(
             except OSError as error:
                 result["skipped"] += 1
                 result["errors"].append({"path": str(path), "reason": str(error)})
+
+        if on_progress:
+            on_progress({
+                "processed_groups": index,
+                "total_groups": len(groups),
+                "deleted": result["deleted"],
+                "skipped": result["skipped"],
+            })
 
     return result

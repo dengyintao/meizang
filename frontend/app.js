@@ -158,7 +158,15 @@ $('#delete-all-duplicates').addEventListener('click', async event => {
   button.disabled = true;
   button.textContent = '正在校验并删除…';
   try {
-    const result = await api('/duplicates/delete', {method:'POST', body:JSON.stringify({expected_groups:groups.length, confirmation:'DELETE_DUPLICATES'})});
+    const started = await api('/duplicates/delete', {method:'POST', body:JSON.stringify({expected_groups:groups.length, confirmation:'DELETE_DUPLICATES'})});
+    let job = started;
+    while (job.status === 'running') {
+      button.textContent = `正在删除 ${job.processed_groups || 0}/${job.total_groups || groups.length} 组…`;
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      job = await api(`/duplicates/delete/${job.id}`);
+    }
+    if (job.status === 'failed') throw new Error(job.error || '重复文件删除失败');
+    const result = job.result;
     const message = `已删除 ${result.deleted} 个文件，释放 ${formatBytes(result.released_bytes)}${result.skipped ? `，跳过 ${result.skipped} 个已变化或受保护文件` : ''}`;
     toast(message, result.skipped > 0);
     await Promise.all([loadDuplicates(), loadStats(), loadAssets()]);
