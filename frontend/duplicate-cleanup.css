@@ -1,8 +1,41 @@
 .duplicate-file b {
-  float: right;
   color: var(--cyan);
   font-size: 10px;
 }
+
+.duplicate-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.duplicate-file-path {
+  overflow-wrap: anywhere;
+}
+
+.duplicate-file-delete {
+  border: 0;
+  background: transparent;
+  color: var(--coral);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.duplicate-file-delete:disabled { opacity: .5; cursor: wait; }
+
+.duplicate-errors {
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 107, 87, .4);
+  border-radius: 14px;
+  background: rgba(255, 107, 87, .08);
+}
+
+.duplicate-errors strong { color: var(--coral); font-size: 13px; }
+.duplicate-errors ul { margin: 10px 0 0; padding-left: 20px; }
+.duplicate-errors li { margin-top: 7px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 
 .duplicate-summary {
   display: flex;

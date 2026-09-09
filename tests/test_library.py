@@ -10,7 +10,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from meizang.database import LibraryDatabase
-from meizang.duplicate_cleanup import CONFIRMATION, FORCE_CONFIRMATION, delete_duplicates
+from meizang.duplicate_cleanup import (
+    CONFIRMATION, FORCE_CONFIRMATION, delete_duplicate_file, delete_duplicates,
+)
 from meizang.providers import ProviderPipeline
 from meizang.providers.base import merge_metadata
 from meizang.providers.local import FilenameProvider, NfoProvider
@@ -133,6 +135,35 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(keeper.exists())
         self.assertFalse(protected.exists())
         self.assertEqual(result["deleted"], 1)
+
+    def test_delete_one_duplicate_file_and_expose_protection_reason(self):
+        keeper = self.root / "a.jpg"
+        target = self.root / "b.jpg"
+        keeper.write_bytes(b"same-media")
+        target.write_bytes(b"same-media")
+        scan_root(self.database, self.root_record["id"])
+        group = self.database.duplicates()[0]
+
+        result = delete_duplicate_file(
+            self.database, lambda _path: True, str(target), group["sha256"], CONFIRMATION,
+        )
+
+        self.assertEqual(result["deleted"], 1)
+        self.assertTrue(keeper.exists())
+        self.assertFalse(target.exists())
+
+        target.write_bytes(b"same-media")
+        scan_root(self.database, self.root_record["id"])
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO managed_links(torrent_hash,source_path,library_path,status) VALUES(?,?,?,'active')",
+                ("hash-2", str(self.root / "qb-link.jpg"), str(target)),
+            )
+        group = self.database.duplicates()[0]
+        with self.assertRaisesRegex(OSError, "qB 任务保护"):
+            delete_duplicate_file(
+                self.database, lambda _path: True, str(target), group["sha256"], CONFIRMATION,
+            )
 
     def test_overlapping_roots_do_not_create_false_duplicate(self):
         nested = self.root / "nested"

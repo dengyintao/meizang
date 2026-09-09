@@ -10,6 +10,48 @@ CONFIRMATION = "DELETE_DUPLICATES"
 FORCE_CONFIRMATION = "FORCE_DELETE_DUPLICATES"
 
 
+def delete_duplicate_file(
+    database: LibraryDatabase,
+    authorize_path: Callable[[Path], bool],
+    raw_path: str,
+    sha256: str,
+    confirmation: str,
+    force_protected: bool = False,
+) -> Dict[str, Any]:
+    required_confirmation = FORCE_CONFIRMATION if force_protected else CONFIRMATION
+    if confirmation != required_confirmation:
+        raise ValueError("缺少重复文件删除确认")
+
+    group = next((item for item in database.duplicates() if item["sha256"] == sha256), None)
+    if not group:
+        raise ValueError("该重复组已经变化，请刷新后重试")
+    item = next((file for file in group["files"] if file["path"] == raw_path), None)
+    if not item or len(group["files"]) < 2:
+        raise ValueError("该文件已不属于重复组，请刷新后重试")
+    if item["protected"] and not force_protected:
+        raise OSError("该文件受 qB 任务保护；如确定不再需要做种，请使用强制删除")
+
+    path = Path(raw_path)
+    if not authorize_path(path):
+        raise OSError("路径不在当前 fnOS 授权范围内")
+    if path.is_symlink() or not path.is_file():
+        raise OSError("文件不存在或不是普通文件")
+    stat = path.stat()
+    if stat.st_size != group["size"] or stat.st_mtime_ns != item["mtime_ns"]:
+        raise OSError("文件在扫描后发生变化，请重新扫描后再删除")
+    if not os.access(str(path.parent), os.W_OK):
+        raise OSError("应用账户没有该目录的删除权限")
+    if sha256_file(path) != group["sha256"]:
+        raise OSError("文件内容在扫描后发生变化，请重新扫描后再删除")
+
+    try:
+        path.unlink()
+    except PermissionError as error:
+        raise OSError("系统拒绝删除，请在飞牛中为媒藏授予该目录的读写权限") from error
+    database.delete_assets_by_path(str(path))
+    return {"deleted": 1, "released_bytes": group["size"], "path": str(path)}
+
+
 def delete_duplicates(
     database: LibraryDatabase,
     authorize_path: Callable[[Path], bool],

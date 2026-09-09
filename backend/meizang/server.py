@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .database import LibraryDatabase
-from .duplicate_cleanup import delete_duplicates
+from .duplicate_cleanup import delete_duplicate_file, delete_duplicates
 from .fnos_api import shared_accessible_folders
 from .mdc_bridge import MDCManager
 from .organizer import QBIntegration
@@ -539,6 +539,16 @@ def make_handler(application: MeizangApplication):
                     application.refresh_allowed_paths()
                     return self.send_json(202, application.duplicate_jobs.start(
                         int(payload.get("expected_groups", -1)),
+                        str(payload.get("confirmation", "")),
+                        payload.get("force_protected") is True,
+                    ))
+                if path == "/api/duplicates/delete-file":
+                    application.refresh_allowed_paths()
+                    return self.send_json(200, delete_duplicate_file(
+                        application.database,
+                        application.is_authorized_path,
+                        str(payload.get("path", "")),
+                        str(payload.get("sha256", "")),
                         str(payload.get("confirmation", "")),
                         payload.get("force_protected") is True,
                     ))

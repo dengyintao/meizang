@@ -8,8 +8,8 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.8.7">
-  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.7">
+  <link rel="stylesheet" href="provider.css?v=0.8.8">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.8">
   </head>
   <body>
     <div class="app-shell">
@@ -82,6 +82,7 @@
 
         <section class="view" data-view="duplicates">
           <div class="section-intro"><div><span class="kicker">SAFE CLEANUP</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别；每组至少保留一份。普通清理保留 qB 文件，强制清理可忽略该保护。</p></div><div class="duplicate-summary"><strong id="reclaimable">0 B 可释放</strong><div class="duplicate-actions"><button id="delete-all-duplicates" class="button danger" disabled>一键删除重复项</button><button id="force-delete-duplicates" class="button force-danger" disabled>强制删除</button></div></div></div>
+          <div id="duplicate-errors" class="duplicate-errors" hidden></div>
           <div id="duplicate-list" class="duplicate-list"></div>
         </section>
 
@@ -204,7 +205,17 @@
         <span id="asset-preview-path"></span>
       </div>
     </dialog>
+
+    <dialog id="confirm-dialog" class="confirm-dialog">
+      <form method="dialog">
+        <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+        <span class="kicker">CONFIRM ACTION</span>
+        <h2 id="confirm-title">确认操作</h2>
+        <p id="confirm-message"></p>
+        <div class="dialog-actions"><button class="button" value="cancel">取消</button><button id="confirm-submit" class="button danger" value="confirm">确认</button></div>
+      </form>
+    </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.8.7"></script>
+    <script type="module" src="app.js?v=0.8.8"></script>
   </body>
 </html>

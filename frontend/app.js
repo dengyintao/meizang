@@ -31,6 +31,25 @@ function toast(message, error = false) {
   toast.timer = setTimeout(() => element.className = '', 3200);
 }
 
+function confirmAction(title, message, confirmLabel = '确认') {
+  const dialog = $('#confirm-dialog');
+  $('#confirm-title').textContent = title;
+  $('#confirm-message').textContent = message;
+  $('#confirm-submit').textContent = confirmLabel;
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener('close', () => {
+    resolve(dialog.returnValue === 'confirm');
+  }, { once: true }));
+}
+
+function renderDuplicateErrors(errors = []) {
+  const panel = $('#duplicate-errors');
+  panel.hidden = errors.length === 0;
+  panel.innerHTML = errors.length ? `<strong>以下文件未能删除</strong><ul>${errors.map(item =>
+    `<li><span>${escapeHtml(item.path || '未知文件')}</span><br>${escapeHtml(item.reason || '未知原因')}</li>`
+  ).join('')}</ul>` : '';
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
 }
@@ -145,9 +164,41 @@ async function loadDuplicates() {
   $('#reclaimable').textContent = `${formatBytes(total)} 可释放`;
   $('#delete-all-duplicates').disabled = removable === 0;
   $('#force-delete-duplicates').disabled = groups.every(group => group.count < 2);
-  list.innerHTML = groups.length ? groups.map((group, index) => `
-    <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${index + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map(file => `<div class="duplicate-file">${escapeHtml(file.path)}${file.protected ? '<b>qB 保护</b>' : ''}</div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
+  list.innerHTML = groups.length ? groups.map((group, groupIndex) => `
+    <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${groupIndex + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map((file, fileIndex) => `<div class="duplicate-file"><span class="duplicate-file-path">${escapeHtml(file.path)}</span>${file.protected ? '<b>qB 保护</b>' : '<span></span>'}<button class="duplicate-file-delete" data-group-index="${groupIndex}" data-file-index="${fileIndex}">${file.protected ? '强制删除此副本' : '删除此副本'}</button></div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
 }
+
+$('#duplicate-list').addEventListener('click', async event => {
+  const button = event.target.closest('.duplicate-file-delete');
+  if (!button) return;
+  const group = state.duplicateGroups[Number(button.dataset.groupIndex)];
+  const file = group?.files[Number(button.dataset.fileIndex)];
+  if (!group || !file) return renderDuplicateErrors([{path:'', reason:'列表已经变化，请刷新后重试'}]);
+  const forceProtected = file.protected === true;
+  const confirmed = await confirmAction(
+    forceProtected ? '强制删除 qB 保护文件' : '删除这个重复副本',
+    `${file.path}\n\n每组仍会保留其他副本。${forceProtected ? '删除后可能影响 qB 做种。' : ''}此操作无法撤销。`,
+    forceProtected ? '强制删除' : '删除',
+  );
+  if (!confirmed) return;
+  button.disabled = true;
+  button.textContent = '校验中…';
+  renderDuplicateErrors();
+  try {
+    const result = await api('/duplicates/delete-file', {method:'POST', body:JSON.stringify({
+      path: file.path,
+      sha256: group.sha256,
+      confirmation: forceProtected ? 'FORCE_DELETE_DUPLICATES' : 'DELETE_DUPLICATES',
+      force_protected: forceProtected,
+    })});
+    toast(`已删除 1 个文件，释放 ${formatBytes(result.released_bytes)}`);
+    await Promise.all([loadDuplicates(), loadStats(), loadAssets()]);
+  } catch (error) {
+    renderDuplicateErrors([{path:file.path, reason:error.message}]);
+    button.disabled = false;
+    button.textContent = forceProtected ? '强制删除此副本' : '删除此副本';
+  }
+});
 
 async function runDuplicateCleanup(button, forceProtected = false) {
   const groups = state.duplicateGroups;
@@ -157,7 +208,7 @@ async function runDuplicateCleanup(button, forceProtected = false) {
   const warning = forceProtected
     ? `强制模式将忽略 qB 保护，永久删除约 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组仍保留一份，但做种可能受影响。此操作无法撤销，是否继续？`
     : `将永久删除 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组会保留至少一份，qB 保护文件不会删除。此操作无法撤销，是否继续？`;
-  if (!window.confirm(warning)) return;
+  if (!await confirmAction(forceProtected ? '强制清理重复文件' : '清理重复文件', warning, forceProtected ? '强制删除' : '开始删除')) return;
   button.disabled = true;
   button.textContent = '正在校验并删除…';
   try {
@@ -176,9 +227,11 @@ async function runDuplicateCleanup(button, forceProtected = false) {
     const result = job.result;
     const message = `已删除 ${result.deleted} 个文件，释放 ${formatBytes(result.released_bytes)}${result.skipped ? `，跳过 ${result.skipped} 个已变化或受保护文件` : ''}`;
     toast(message, result.skipped > 0);
+    renderDuplicateErrors(result.errors || []);
     await Promise.all([loadDuplicates(), loadStats(), loadAssets()]);
   } catch (error) {
     toast(error.message, true);
+    renderDuplicateErrors([{path:'批量删除任务', reason:error.message}]);
   } finally {
     button.textContent = forceProtected ? '强制删除' : '一键删除重复项';
     button.disabled = forceProtected
