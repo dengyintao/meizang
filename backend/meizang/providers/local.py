@@ -15,9 +15,10 @@ YEAR_PATTERN = re.compile(r"(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)")
 
 def media_tool_env() -> Dict[str, str]:
     env = os.environ.copy()
-    library_paths = ["/usr/lib/x86_64-linux-gnu"]
+    library_paths = []
     if env.get("LD_LIBRARY_PATH"):
         library_paths.append(env["LD_LIBRARY_PATH"])
+    library_paths.append("/usr/lib/x86_64-linux-gnu")
     env["LD_LIBRARY_PATH"] = ":".join(library_paths)
     return env
 

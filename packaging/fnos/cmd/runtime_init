@@ -1,0 +1,12 @@
+#!/bin/bash
+
+RUNTIME_LIB_DIR="${TRIM_PKGVAR}/runtime-libs"
+OPENCL_SOURCE="/usr/lib/x86_64-linux-gnu/libOpenCL.so.1"
+
+mkdir -p "${RUNTIME_LIB_DIR}"
+if [ -f "${OPENCL_SOURCE}" ]; then
+    cp -f "${OPENCL_SOURCE}" "${RUNTIME_LIB_DIR}/libOpenCL.so.1"
+    chmod 644 "${RUNTIME_LIB_DIR}/libOpenCL.so.1"
+fi
+
+exit 0

@@ -27,7 +27,7 @@ class TMDBProvider(MetadataProvider):
     def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         query = dict(params or {})
         query.setdefault("language", self.language)
-        headers = {"Accept": "application/json", "User-Agent": "Meizang/0.8.4"}
+        headers = {"Accept": "application/json", "User-Agent": "Meizang/0.8.5"}
         if self.token.startswith("eyJ"):
             headers["Authorization"] = "Bearer {}".format(self.token)
         else:

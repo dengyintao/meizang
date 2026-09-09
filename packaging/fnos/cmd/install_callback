@@ -1,4 +1,4 @@
 #!/bin/bash
 mkdir -p "${TRIM_PKGVAR}"
+"$(dirname "$0")/runtime_init"
 exit 0
-

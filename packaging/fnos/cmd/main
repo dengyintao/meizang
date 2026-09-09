@@ -4,8 +4,10 @@ LOG_FILE="${TRIM_PKGVAR}/meizang.log"
 PID_FILE="${TRIM_PKGVAR}/meizang.pid"
 SOCKET_PATH="${TRIM_APPDEST}/meizang.sock"
 APP_DIR="${TRIM_APPDEST}/server"
+RUNTIME_LIB_DIR="${TRIM_PKGVAR}/runtime-libs"
 
 export PATH="/var/apps/python312/target/bin:${PATH}"
+export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 is_running() {
     [ -f "${PID_FILE}" ] || return 1
