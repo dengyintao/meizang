@@ -576,6 +576,25 @@ const mdcSectionNames = {
   actor_photo:'演员头像', direct:'直连模式'
 };
 
+const mdcFieldNames = {
+  main_mode:'默认处理方式', source_folder:'来源目录', success_folder:'整理后目录', failed_folder:'失败文件目录',
+  link_mode:'文件整理方式', scan_hardlink:'识别硬链接', failed_move:'移动识别失败文件', auto_exit:'任务结束后退出',
+  translate_to_sc:'转换为简体中文', del_empty_folder:'清理空目录', ignore_failed_list:'重试失败记录',
+  download_only_missing_images:'只补充缺失图片', number_uppercase:'番号使用大写', image_naming_with_number:'图片名包含番号',
+  switch:'启用此功能', proxy:'代理地址', timeout:'请求超时', retry:'重试次数', priority:'来源顺序',
+  escape_folder:'排除目录', escape_literals:'排除关键词', debug:'调试模式', language:'目标语言',
+  key:'服务密钥', engine:'翻译服务', website:'信息来源', water:'封面水印', extrafanart:'下载额外剧照',
+  actor_only_tag:'演员仅写入标签', anonymous_fill:'补充匿名演员', aways_imagecut:'始终裁剪封面',
+  multi_part_fanart:'多分段共用剧照', download_for_kodi:'兼容 Kodi 命名', uncensored_only:'仅处理无码影片',
+};
+
+const mdcFieldHelp = {
+  main_mode:'新任务默认采用的处理流程。', link_mode:'移动最直观；硬链接可节省空间；软链接保留原路径。',
+  priority:'按顺序尝试不同信息站点，前面的优先。', source_folder:'仅允许使用飞牛已经授权的目录。',
+  success_folder:'刮削成功后影片存放的位置。', failed_folder:'无法识别的文件可集中放到这里。',
+  key:'密钥保存在应用私有配置中，页面不会显示已保存的明文。',
+};
+
 function mdcField(section, key, value) {
   const id = `mdc-cfg-${section}-${key}`.replaceAll('_', '-');
   let control;
@@ -583,13 +602,15 @@ function mdcField(section, key, value) {
   else if (key === 'link_mode') control = `<select id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}"><option value="0">0 · 移动</option><option value="1">1 · 软链接</option><option value="2">2 · 优先硬链接</option></select>`;
   else if (['switch','scan_hardlink','failed_move','auto_exit','translate_to_sc','del_empty_folder','ignore_failed_list','download_only_missing_images','jellyfin','actor_only_tag','anonymous_fill','image_naming_with_number','number_uppercase','uncensored_only','aways_imagecut','multi_part_fanart','download_for_kodi'].includes(key)) control = `<select id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}"><option value="0">关闭</option><option value="1">启用</option></select>`;
   else control = `<input id="${id}" data-mdc-section="${escapeHtml(section)}" data-mdc-key="${escapeHtml(key)}" value="${escapeHtml(value)}" ${section === 'translate' && key === 'key' ? 'type="password" autocomplete="off" placeholder="已配置时留空保持"' : ''}>`;
-  return `<label><small>[${escapeHtml(section)}] ${escapeHtml(key)}</small>${control}</label>`;
+  const title = mdcFieldNames[key] || key.replaceAll('_', ' ');
+  const help = mdcFieldHelp[key] || '';
+  return `<label class="mdc-config-field" data-mdc-search="${escapeHtml(`${mdcSectionNames[section] || section} ${title} ${key}`.toLowerCase())}"><strong>${escapeHtml(title)}</strong>${control}${help ? `<small>${escapeHtml(help)}</small>` : ''}<code>${escapeHtml(section)}.${escapeHtml(key)}</code></label>`;
 }
 
 function renderMDCConfig(data) {
   $('#mdc-engine-status').textContent = `MDC 引擎已就绪 · ${data.provider_count} 个 Provider`;
   $('#mdc-provider-count').textContent = `${data.provider_count} PROVIDERS`;
-  $('#mdc-config-sections').innerHTML = Object.entries(data.sections).map(([section, values], index) => `<details class="mdc-config-section" ${index < 3 ? 'open' : ''}><summary>${escapeHtml(mdcSectionNames[section] || section)} · [${escapeHtml(section)}]</summary><div class="mdc-config-grid">${Object.entries(values).map(([key, value]) => mdcField(section, key, value)).join('')}</div></details>`).join('');
+  $('#mdc-config-sections').innerHTML = Object.entries(data.sections).map(([section, values]) => `<details class="mdc-config-section" data-mdc-config-group><summary><span>${escapeHtml(mdcSectionNames[section] || section)}</span><small>${Object.keys(values).length} 项</small></summary><div class="mdc-config-grid">${Object.entries(values).map(([key, value]) => mdcField(section, key, value)).join('')}</div></details>`).join('');
   $$('[data-mdc-section]').forEach(input => { if (input.tagName === 'SELECT') input.value = data.sections[input.dataset.mdcSection][input.dataset.mdcKey]; });
 }
 
@@ -629,7 +650,8 @@ $('#mdc-run-form').addEventListener('submit', async event => {
 });
 
 $('#mdc-search-button').addEventListener('click', async () => {
-  const number = window.prompt('输入要测试的影片番号'); if (!number) return;
+  const number = $('#mdc-search-number').value.trim();
+  if (!number) return toast('请先填写要测试的影片番号', true);
   try { await api('/mdc/jobs', {method:'POST', body:JSON.stringify({kind:'search', number, source:$('#mdc-source').value.trim()})}); toast('番号搜索任务已启动'); await loadMDC(); }
   catch (error) { toast(error.message, true); }
 });
@@ -642,9 +664,32 @@ $('#mdc-schedule-form').addEventListener('submit', async event => {
 
 $('#mdc-refresh').addEventListener('click', () => loadMDC().catch(error => toast(error.message, true)));
 $('#mdc-reset-config').addEventListener('click', async () => {
-  if (!window.confirm('恢复 Movie_Data_Capture 源仓库中的完整默认配置？')) return;
+  if (!await confirmAction('恢复默认设置', '当前自定义刮削设置将被替换为 Movie_Data_Capture 默认配置。', '恢复默认')) return;
   try { renderMDCConfig(await api('/settings/mdc/reset', {method:'POST'})); toast('已恢复 MDC 默认配置'); }
   catch (error) { toast(error.message, true); }
+});
+
+$$('.mdc-mode-card').forEach(button => button.addEventListener('click', () => {
+  $('#mdc-mode').value = button.dataset.mode;
+  $$('.mdc-mode-card').forEach(item => item.classList.toggle('active', item === button));
+  const summaries = {1:'将获取影片信息并整理目录', 2:'将根据已有信息整理文件', 3:'将在原目录补充影片信息'};
+  $('#mdc-run-summary').textContent = $('#mdc-dry-run').checked ? `预览：${summaries[button.dataset.mode]}` : summaries[button.dataset.mode];
+}));
+
+$('#mdc-dry-run').addEventListener('change', () => {
+  const active = $('.mdc-mode-card.active');
+  active?.click();
+});
+
+$('#mdc-config-search').addEventListener('input', event => {
+  const query = event.target.value.trim().toLowerCase();
+  $$('[data-mdc-config-group]').forEach(group => {
+    const fields = [...group.querySelectorAll('.mdc-config-field')];
+    fields.forEach(field => { field.hidden = Boolean(query) && !field.dataset.mdcSearch.includes(query); });
+    const visible = fields.some(field => !field.hidden);
+    group.hidden = !visible;
+    if (query && visible) group.open = true;
+  });
 });
 
 Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]).catch(error => toast(error.message, true));
