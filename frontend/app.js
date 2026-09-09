@@ -144,21 +144,28 @@ async function loadDuplicates() {
   const removable = groups.reduce((sum, group) => sum + group.removable_count, 0);
   $('#reclaimable').textContent = `${formatBytes(total)} 可释放`;
   $('#delete-all-duplicates').disabled = removable === 0;
+  $('#force-delete-duplicates').disabled = groups.every(group => group.count < 2);
   list.innerHTML = groups.length ? groups.map((group, index) => `
     <article class="duplicate-group"><div class="duplicate-head"><strong>重复组 #${index + 1} · ${group.count} 个完全相同文件</strong><span>可释放 ${formatBytes(group.reclaimable_bytes)}</span></div>${group.files.map(file => `<div class="duplicate-file">${escapeHtml(file.path)}${file.protected ? '<b>qB 保护</b>' : ''}</div>`).join('')}</article>`).join('') : '<div class="panel empty-state">暂未发现完全重复的媒体文件。</div>';
 }
 
-$('#delete-all-duplicates').addEventListener('click', async event => {
+async function runDuplicateCleanup(button, forceProtected = false) {
   const groups = state.duplicateGroups;
-  const bytes = groups.reduce((sum, group) => sum + group.reclaimable_bytes, 0);
-  const count = groups.reduce((sum, group) => sum + group.removable_count, 0);
+  const count = groups.reduce((sum, group) => sum + (forceProtected ? Math.max(0, group.count - 1) : group.removable_count), 0);
+  const bytes = groups.reduce((sum, group) => sum + group.size * (forceProtected ? Math.max(0, group.count - 1) : group.removable_count), 0);
   if (!count) return;
-  if (!window.confirm(`将永久删除 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组会保留至少一份，qB 保护文件不会删除。此操作无法撤销，是否继续？`)) return;
-  const button = event.currentTarget;
+  const warning = forceProtected
+    ? `强制模式将忽略 qB 保护，永久删除约 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组仍保留一份，但做种可能受影响。此操作无法撤销，是否继续？`
+    : `将永久删除 ${count} 个重复文件，预计释放 ${formatBytes(bytes)}。每组会保留至少一份，qB 保护文件不会删除。此操作无法撤销，是否继续？`;
+  if (!window.confirm(warning)) return;
   button.disabled = true;
   button.textContent = '正在校验并删除…';
   try {
-    const started = await api('/duplicates/delete', {method:'POST', body:JSON.stringify({expected_groups:groups.length, confirmation:'DELETE_DUPLICATES'})});
+    const started = await api('/duplicates/delete', {method:'POST', body:JSON.stringify({
+      expected_groups: groups.length,
+      confirmation: forceProtected ? 'FORCE_DELETE_DUPLICATES' : 'DELETE_DUPLICATES',
+      force_protected: forceProtected,
+    })});
     let job = started;
     while (job.status === 'running') {
       button.textContent = `正在删除 ${job.processed_groups || 0}/${job.total_groups || groups.length} 组…`;
@@ -173,10 +180,15 @@ $('#delete-all-duplicates').addEventListener('click', async event => {
   } catch (error) {
     toast(error.message, true);
   } finally {
-    button.textContent = '一键删除重复项';
-    button.disabled = state.duplicateGroups.reduce((sum, group) => sum + group.removable_count, 0) === 0;
+    button.textContent = forceProtected ? '强制删除' : '一键删除重复项';
+    button.disabled = forceProtected
+      ? state.duplicateGroups.every(group => group.count < 2)
+      : state.duplicateGroups.reduce((sum, group) => sum + group.removable_count, 0) === 0;
   }
-});
+}
+
+$('#delete-all-duplicates').addEventListener('click', event => runDuplicateCleanup(event.currentTarget, false));
+$('#force-delete-duplicates').addEventListener('click', event => runDuplicateCleanup(event.currentTarget, true));
 
 async function startScan(rootId, button, forceMetadata = false) {
   const original = button?.textContent;

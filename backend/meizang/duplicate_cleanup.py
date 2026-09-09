@@ -7,6 +7,7 @@ from .scanner import sha256_file
 
 
 CONFIRMATION = "DELETE_DUPLICATES"
+FORCE_CONFIRMATION = "FORCE_DELETE_DUPLICATES"
 
 
 def delete_duplicates(
@@ -15,8 +16,10 @@ def delete_duplicates(
     expected_groups: int,
     confirmation: str,
     on_progress: Optional[Callable[[Dict[str, int]], None]] = None,
+    force_protected: bool = False,
 ) -> Dict[str, Any]:
-    if confirmation != CONFIRMATION:
+    required_confirmation = FORCE_CONFIRMATION if force_protected else CONFIRMATION
+    if confirmation != required_confirmation:
         raise ValueError("缺少重复文件删除确认")
 
     groups = database.duplicates()
@@ -34,7 +37,7 @@ def delete_duplicates(
 
     for index, group in enumerate(groups, 1):
         files = group["files"]
-        keepers = [item for item in files if item["path"] in protected]
+        keepers = [] if force_protected else [item for item in files if item["path"] in protected]
         keeper = keepers[0] if keepers else min(
             files, key=lambda item: (len(item["path"]), item["path"])
         )
@@ -62,7 +65,7 @@ def delete_duplicates(
 
         for item in files:
             path = Path(item["path"])
-            if item["path"] == keeper["path"] or item["path"] in protected:
+            if item["path"] == keeper["path"] or (not force_protected and item["path"] in protected):
                 continue
             try:
                 if not authorize_path(path):

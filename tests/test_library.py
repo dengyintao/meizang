@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from meizang.database import LibraryDatabase
-from meizang.duplicate_cleanup import CONFIRMATION, delete_duplicates
+from meizang.duplicate_cleanup import CONFIRMATION, FORCE_CONFIRMATION, delete_duplicates
 from meizang.providers import ProviderPipeline
 from meizang.providers.base import merge_metadata
 from meizang.providers.local import FilenameProvider, NfoProvider
@@ -112,6 +112,27 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(keeper.exists())
         self.assertEqual(result["deleted"], 1)
         self.assertEqual(result["skipped"], 1)
+
+    def test_force_duplicate_cleanup_can_remove_qb_protected_copy(self):
+        keeper = self.root / "a.jpg"
+        protected = self.root / "z-protected.jpg"
+        keeper.write_bytes(b"same-media")
+        protected.write_bytes(b"same-media")
+        scan_root(self.database, self.root_record["id"])
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO managed_links(torrent_hash,source_path,library_path,status) VALUES(?,?,?,'active')",
+                ("hash", str(self.root / "qb-link.jpg"), str(protected)),
+            )
+
+        result = delete_duplicates(
+            self.database, lambda _path: True, 1, FORCE_CONFIRMATION,
+            force_protected=True,
+        )
+
+        self.assertTrue(keeper.exists())
+        self.assertFalse(protected.exists())
+        self.assertEqual(result["deleted"], 1)
 
     def test_overlapping_roots_do_not_create_false_duplicate(self):
         nested = self.root / "nested"

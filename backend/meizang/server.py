@@ -192,8 +192,9 @@ class DuplicateCleanupJobs:
         self.active_id = ""
         self.lock = threading.Lock()
 
-    def start(self, expected_groups: int, confirmation: str) -> Dict[str, Any]:
-        if confirmation != "DELETE_DUPLICATES":
+    def start(self, expected_groups: int, confirmation: str, force_protected: bool = False) -> Dict[str, Any]:
+        required_confirmation = "FORCE_DELETE_DUPLICATES" if force_protected else "DELETE_DUPLICATES"
+        if confirmation != required_confirmation:
             raise ValueError("缺少重复文件删除确认")
         with self.lock:
             if self.active_id and self.jobs.get(self.active_id, {}).get("status") == "running":
@@ -202,22 +203,23 @@ class DuplicateCleanupJobs:
             job = {
                 "id": job_id, "status": "running", "processed_groups": 0,
                 "total_groups": expected_groups, "deleted": 0, "skipped": 0,
-                "result": None, "error": "",
+                "force_protected": force_protected, "result": None, "error": "",
             }
             self.jobs[job_id] = job
             self.active_id = job_id
         threading.Thread(
-            target=self._run, args=(job_id, expected_groups, confirmation), daemon=True,
+            target=self._run, args=(job_id, expected_groups, confirmation, force_protected), daemon=True,
         ).start()
         return dict(job)
 
-    def _run(self, job_id: str, expected_groups: int, confirmation: str) -> None:
+    def _run(self, job_id: str, expected_groups: int, confirmation: str, force_protected: bool) -> None:
         def progress(values: Dict[str, int]) -> None:
             with self.lock:
                 self.jobs[job_id].update(values)
         try:
             result = delete_duplicates(
                 self.database, self.authorize_path, expected_groups, confirmation, progress,
+                force_protected,
             )
             with self.lock:
                 self.jobs[job_id].update(status="completed", result=result)
@@ -538,6 +540,7 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(202, application.duplicate_jobs.start(
                         int(payload.get("expected_groups", -1)),
                         str(payload.get("confirmation", "")),
+                        payload.get("force_protected") is True,
                     ))
                 return self.send_json(404, {"error": "接口不存在"})
             except (ValueError, OSError) as error:

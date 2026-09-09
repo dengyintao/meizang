@@ -8,8 +8,8 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.8.6">
-  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.6">
+  <link rel="stylesheet" href="provider.css?v=0.8.7">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.8.7">
   </head>
   <body>
     <div class="app-shell">
@@ -81,7 +81,7 @@
         </section>
 
         <section class="view" data-view="duplicates">
-          <div class="section-intro"><div><span class="kicker">SAFE CLEANUP</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别；每组至少保留一份，qB 管理中的真实文件不会删除。</p></div><div class="duplicate-summary"><strong id="reclaimable">0 B 可释放</strong><button id="delete-all-duplicates" class="button danger" disabled>一键删除重复项</button></div></div>
+          <div class="section-intro"><div><span class="kicker">SAFE CLEANUP</span><h2>重复文件</h2><p>按文件大小和 SHA-256 精确识别；每组至少保留一份。普通清理保留 qB 文件，强制清理可忽略该保护。</p></div><div class="duplicate-summary"><strong id="reclaimable">0 B 可释放</strong><div class="duplicate-actions"><button id="delete-all-duplicates" class="button danger" disabled>一键删除重复项</button><button id="force-delete-duplicates" class="button force-danger" disabled>强制删除</button></div></div></div>
           <div id="duplicate-list" class="duplicate-list"></div>
         </section>
 
@@ -205,6 +205,6 @@
       </div>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.8.6"></script>
+    <script type="module" src="app.js?v=0.8.7"></script>
   </body>
 </html>

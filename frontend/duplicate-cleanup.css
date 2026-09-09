@@ -21,3 +21,14 @@
   border-color: rgba(255, 107, 87, .35);
   color: var(--coral);
 }
+
+.duplicate-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.button.force-danger {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #240b07;
+}
