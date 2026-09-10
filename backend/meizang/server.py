@@ -11,7 +11,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import __version__
 from .database import LibraryDatabase
@@ -193,6 +193,11 @@ class ScanJobs:
         with self.lock:
             job = self.jobs.get(job_id)
             return dict(job) if job else None
+
+    def is_running(self, root_id: int) -> bool:
+        with self.lock:
+            job_id = self.root_jobs.get(root_id)
+            return bool(job_id and self.jobs.get(job_id, {}).get("status") == "running")
 
 
 class DuplicateCleanupJobs:
@@ -401,9 +406,13 @@ def make_handler(application: MeizangApplication):
                 self.send_header("Content-Range", "bytes {}-{}/{}".format(start, end, size))
             if download_name:
                 disposition = "inline" if inline else "attachment"
+                suffix = candidate.suffix if candidate.suffix.isascii() else ""
+                fallback = "media{}".format(suffix.replace('"', ""))
                 self.send_header(
                     "Content-Disposition",
-                    '{}; filename="{}"'.format(disposition, download_name.replace('"', "")),
+                    '{}; filename="{}"; filename*=UTF-8\'\'{}'.format(
+                        disposition, fallback, quote(download_name, safe=""),
+                    ),
                 )
             self.end_headers()
             with candidate.open("rb") as stream:
@@ -454,6 +463,9 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(200, application.mdc.config.public())
                 if path == "/api/settings/music":
                     return self.send_json(200, public_music_settings(application.database.settings()))
+                if path == "/api/music/jobs/latest":
+                    job = application.music.latest()
+                    return self.send_json(200, job) if job else self.send_json(200, {})
                 if path.startswith("/api/music/jobs/"):
                     job = application.music.get(path.rsplit("/", 1)[-1])
                     return self.send_json(200, job) if job else self.send_json(404, {"error": "音乐任务不存在"})
@@ -539,7 +551,10 @@ def make_handler(application: MeizangApplication):
                     return self.send_json(202, application.mdc.submit(payload))
                 if path == "/api/music/jobs":
                     application.refresh_allowed_paths()
-                    return self.send_json(202, application.music.start(int(payload.get("root_id", 0)), payload))
+                    root_id = int(payload.get("root_id", 0))
+                    if application.jobs.is_running(root_id):
+                        raise ValueError("该目录仍在扫描，请等待扫描完成后再开始音乐刮削")
+                    return self.send_json(202, application.music.start(root_id, payload))
                 if path == "/api/settings/mdc/reset":
                     return self.send_json(200, application.mdc.config.reset())
                 if path.startswith("/api/mdc/jobs/") and path.endswith("/cancel"):

@@ -183,7 +183,8 @@ class LibraryDatabase:
     def roots(self) -> List[Dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT r.*, COUNT(a.id) AS asset_count "
+                "SELECT r.*, COUNT(a.id) AS asset_count, "
+                "SUM(CASE WHEN a.media_type='audio' THEN 1 ELSE 0 END) AS audio_count "
                 "FROM library_roots r LEFT JOIN media_assets a ON a.root_id=r.id "
                 "GROUP BY r.id ORDER BY r.id"
             ).fetchall()
@@ -251,6 +252,14 @@ class LibraryDatabase:
                 "SELECT id FROM media_assets WHERE root_id=? AND media_type='audio' ORDER BY path", (root_id,)
             ).fetchall()
         return [item for row in rows if (item := self.asset(row["id"]))]
+
+    def audio_asset_count(self, root_id: int) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM media_assets WHERE root_id=? AND media_type='audio'",
+                (root_id,),
+            ).fetchone()
+        return int(row["count"])
 
     def stats(self) -> Dict[str, Any]:
         with self.connect() as connection:

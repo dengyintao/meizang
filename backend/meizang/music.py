@@ -112,20 +112,34 @@ class MusicJobs:
         self.authorize_path = authorize_path
         self.normalize_directory = normalize_directory
         self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.root_jobs: Dict[int, str] = {}
         self.lock = threading.Lock()
 
     def start(self, root_id: int, options: Dict[str, Any]) -> Dict[str, Any]:
         root = self.database.root(root_id)
         if not root:
             raise ValueError("音乐目录不存在")
+        if self.database.audio_asset_count(root_id) == 0:
+            raise ValueError("该目录尚未扫描到音乐文件，请先完成扫描或选择包含音乐的目录")
+        with self.lock:
+            existing_id = self.root_jobs.get(root_id)
+            if existing_id and self.jobs.get(existing_id, {}).get("status") == "running":
+                return dict(self.jobs[existing_id])
         job_id = uuid.uuid4().hex
-        job = {"id": job_id, "status": "running", "progress": 0, "total": 0, "matched": 0, "organized": 0, "failed": 0, "errors": [], "message": "正在读取音乐文件"}
+        job = {"id": job_id, "root_id": root_id, "status": "running", "progress": 0, "total": 0, "matched": 0, "organized": 0, "failed": 0, "errors": [], "message": "正在读取音乐文件"}
         with self.lock:
             self.jobs[job_id] = job
+            self.root_jobs[root_id] = job_id
         threading.Thread(target=self._run, args=(job_id, root, options), daemon=True).start()
         return dict(job)
 
     def _run(self, job_id: str, root: Dict[str, Any], options: Dict[str, Any]) -> None:
+        try:
+            self._execute(job_id, root, options)
+        except Exception as error:
+            self._update(job_id, status="failed", message="音乐任务失败", error=str(error))
+
+    def _execute(self, job_id: str, root: Dict[str, Any], options: Dict[str, Any]) -> None:
         settings = self.database.settings()
         proxy = settings.get("proxy_url", "") if settings.get("proxy_enabled") == "true" else ""
         client = MusicBrainzClient(proxy)
@@ -182,7 +196,11 @@ class MusicJobs:
                 scan_root(self.database, output["id"], force_metadata=True)
         except Exception:
             pass
-        self._update(job_id, status="completed", message="音乐整理完成")
+        job = self.get(job_id) or {}
+        message = "音乐整理完成"
+        if job.get("failed") and not job.get("matched"):
+            message = "音乐任务完成，但所有文件均处理失败"
+        self._update(job_id, status="completed", message=message)
 
     def _update(self, job_id: str, **values) -> None:
         with self.lock:
@@ -195,3 +213,9 @@ class MusicJobs:
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self.lock:
             return dict(self.jobs[job_id]) if job_id in self.jobs else None
+
+    def latest(self) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            if not self.jobs:
+                return None
+            return dict(next(reversed(self.jobs.values())))

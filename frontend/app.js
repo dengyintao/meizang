@@ -1,7 +1,7 @@
 import { TrimApp } from './vendor/trim-web-app.js';
 
 const PREFIX = location.pathname.startsWith('/app/meizang') ? '/app/meizang' : '';
-const state = { type: 'all', query: '', roots: [], stats: null, duplicateGroups: [] };
+const state = { type: 'all', query: '', roots: [], stats: null, duplicateGroups: [], musicPollingJobId: '' };
 const trimSdk = new TrimApp();
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -376,6 +376,7 @@ function route() {
   if (target === 'duplicates') loadDuplicates().catch(error => toast(error.message, true));
   if (target === 'scraping') loadMDC().catch(error => toast(error.message, true));
   if (target === 'music') loadMusicSettings().catch(error => toast(error.message, true));
+  document.documentElement.classList.add('app-ready');
 }
 
 const dialog = $('#add-root-dialog');
@@ -400,7 +401,6 @@ async function addSelectedRoots(paths) {
 }
 
 async function chooseRoot() {
-  sessionStorage.removeItem('meizang-picker-target');
   const button = $('#open-add-root');
   if (isLocalDevelopment) {
     dialog.showModal();
@@ -408,30 +408,48 @@ async function chooseRoot() {
   }
   button.disabled = true;
   try {
-    await trimSdk.ready();
-    if (!trimSdk.isStandaloneWeb) {
-      const result = await trimSdk.pickSharedFile({
-        title: '选择媒藏媒体目录',
-        okText: '授权并添加',
-        sidebarGroup: ['myFiles', 'otherShare', 'external', 'remote', 'favorites'],
-      });
-      if (result?.code !== 0) throw new Error(result?.msg || '目录选择已取消');
-      await addSelectedRoots(result.data);
-      return;
-    }
-    const authState = crypto.randomUUID();
-    sessionStorage.setItem('meizang-auth-state', authState);
-    await trimSdk.openAppAuth('pickSharedFile', {
-      appName: 'meizang',
-      sidebarGroup: ['myFiles', 'otherShare', 'external', 'remote', 'favorites'],
-      redirectUri: `${location.origin}${PREFIX}/callback.html`,
-      state: authState,
-    }, { target: '_blank', features: 'width=750,height=630' });
+    await pickSharedDirectory('', '选择媒藏媒体目录', '授权并添加');
   } catch (error) {
     toast(error.message || '无法打开飞牛目录选择器', true);
   } finally {
     button.disabled = false;
   }
+}
+
+function pickerPaths(result) {
+  const value = result?.data ?? result?.path ?? [];
+  return (Array.isArray(value) ? value : [value]).filter(item => typeof item === 'string' && item);
+}
+
+async function pickSharedDirectory(target = '', title = '选择目录', okText = '授权并选择') {
+  sessionStorage.removeItem('meizang-picker-target');
+  await trimSdk.ready();
+  const options = {
+    title, okText,
+    sidebarGroup: ['myFiles', 'otherShare', 'external', 'remote', 'favorites'],
+  };
+  if (!trimSdk.isStandaloneWeb) {
+    const result = await trimSdk.pickSharedFile(options);
+    if (result?.code !== 0) throw new Error(result?.msg || '目录选择已取消');
+    const paths = pickerPaths(result);
+    if (!paths.length) throw new Error('没有选择目录');
+    if (target) {
+      const input = document.getElementById(target);
+      if (!input) throw new Error('目录输入框不存在');
+      input.value = paths[0];
+      input.dispatchEvent(new Event('change', {bubbles:true}));
+    } else {
+      await addSelectedRoots(paths);
+    }
+    return;
+  }
+  sessionStorage.setItem('meizang-picker-target', target || '__add_root__');
+  const authState = crypto.randomUUID();
+  sessionStorage.setItem('meizang-auth-state', authState);
+  await trimSdk.openAppAuth('pickSharedFile', {
+    appName:'meizang', ...options,
+    redirectUri:`${location.origin}${PREFIX}/callback.html`, state:authState,
+  }, {target:'_blank', features:'width=750,height=630'});
 }
 
 $('#open-add-root').addEventListener('click', chooseRoot);
@@ -475,10 +493,15 @@ window.addEventListener('message', event => {
   }
   const pickerTarget = sessionStorage.getItem('meizang-picker-target');
   sessionStorage.removeItem('meizang-picker-target');
-  const paths = result?.path || result?.data || [];
-  if (['qb-library-root', 'qb-local-prefix'].includes(pickerTarget)) {
+  const paths = pickerPaths(result);
+  if (pickerTarget && pickerTarget !== '__add_root__') {
+    const input = document.getElementById(pickerTarget);
     const path = Array.isArray(paths) ? paths[0] : paths;
-    if (path) $(`#${pickerTarget}`).value = path;
+    if (!input) return toast('目录输入框不存在，请刷新页面重试', true);
+    if (path) {
+      input.value = path;
+      input.dispatchEvent(new Event('change', {bubbles:true}));
+    }
     return;
   }
   addSelectedRoots(paths).catch(error => toast(error.message, true));
@@ -541,14 +564,20 @@ for (const action of ['test', 'sync']) {
 
 async function loadMusicSettings() {
   const settings = await api('/settings/music');
-  $('#music-root').innerHTML = state.roots.length
-    ? state.roots.map(root => `<option value="${root.id}">${escapeHtml(root.label || root.path)} · ${escapeHtml(root.path)}</option>`).join('')
-    : '<option value="">请先添加并扫描音乐目录</option>';
+  const musicRoots = state.roots.filter(root => Number(root.audio_count) > 0);
+  $('#music-root').innerHTML = musicRoots.length
+    ? musicRoots.map(root => `<option value="${root.id}">${escapeHtml(root.label || root.path)} · ${Number(root.audio_count)} 首</option>`).join('')
+    : '<option value="">尚无已扫描到音乐的目录</option>';
   $('#music-write-tags').checked = settings.write_tags;
   $('#music-cover').checked = settings.download_cover;
   $('#music-move').checked = settings.move_files;
   $('#music-library-root').value = settings.library_root || '';
   $('#music-library-setting').hidden = !settings.move_files;
+  const latest = await api('/music/jobs/latest');
+  if (latest.id) {
+    renderMusicJob(latest);
+    if (latest.status === 'running') pollMusicJob(latest).catch(error => toast(error.message, true));
+  }
 }
 
 function renderMusicJob(job) {
@@ -562,15 +591,25 @@ function renderMusicJob(job) {
 }
 
 async function pollMusicJob(job) {
+  if (state.musicPollingJobId === job.id) return;
+  state.musicPollingJobId = job.id;
   let current = job;
-  while (current.status === 'running') {
+  try {
+    while (current.status === 'running') {
+      renderMusicJob(current);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      current = await api(`/music/jobs/${current.id}`);
+    }
     renderMusicJob(current);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    current = await api(`/music/jobs/${current.id}`);
+    if (current.status === 'failed') {
+      toast(current.error || '音乐任务失败', true);
+      return;
+    }
+    await Promise.all([loadStats(), loadRoots(), loadAssets()]);
+    toast(`音乐任务完成：匹配 ${current.matched}，整理 ${current.organized}，跳过 ${current.failed}`, current.failed > 0);
+  } finally {
+    if (state.musicPollingJobId === job.id) state.musicPollingJobId = '';
   }
-  renderMusicJob(current);
-  await Promise.all([loadStats(), loadRoots(), loadAssets()]);
-  toast(`音乐任务完成：匹配 ${current.matched}，整理 ${current.organized}，跳过 ${current.failed}`, current.failed > 0);
 }
 
 $('#music-move').addEventListener('change', event => { $('#music-library-setting').hidden = !event.target.checked; });
@@ -599,6 +638,7 @@ $('#music-form').addEventListener('submit', async event => {
 
 $$('.path-picker').forEach(button => button.addEventListener('click', async () => {
   const target = button.dataset.target;
+  button.disabled = true;
   try {
     if (isLocalDevelopment) {
       const paths = await api('/roots');
@@ -613,18 +653,9 @@ $$('.path-picker').forEach(button => button.addEventListener('click', async () =
       picker.showModal();
       return;
     }
-    await trimSdk.ready();
-    if (!trimSdk.isStandaloneWeb) {
-      const result = await trimSdk.pickSharedFile({title:'选择整理目录', okText:'授权并选择', sidebarGroup:['myFiles','otherShare','external']});
-      if (result?.code !== 0) throw new Error(result?.msg || '选择已取消');
-      if (result.data?.length) $(`#${target}`).value = result.data[0];
-    } else {
-      sessionStorage.setItem('meizang-picker-target', target);
-      const authState = crypto.randomUUID();
-      sessionStorage.setItem('meizang-auth-state', authState);
-      await trimSdk.openAppAuth('pickSharedFile', {appName:'meizang', redirectUri:`${location.origin}${PREFIX}/callback.html`, state:authState}, {target:'_blank'});
-    }
+    await pickSharedDirectory(target, button.dataset.title || '选择目录', '授权并选择');
   } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
 }));
 
 const mdcSectionNames = {
@@ -751,5 +782,14 @@ $('#mdc-config-search').addEventListener('input', event => {
   });
 });
 
-Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]).catch(error => toast(error.message, true));
-route();
+async function initialize() {
+  try {
+    await Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    route();
+  }
+}
+
+initialize();

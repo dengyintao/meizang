@@ -13,6 +13,7 @@ from meizang.database import LibraryDatabase
 from meizang.duplicate_cleanup import (
     CONFIRMATION, FORCE_CONFIRMATION, delete_duplicate_file, delete_duplicates,
 )
+from meizang.music import MusicJobs
 from meizang.providers import ProviderPipeline
 from meizang.providers.base import merge_metadata
 from meizang.providers.local import FilenameProvider, MusicSidecarProvider, NfoProvider
@@ -47,6 +48,19 @@ class LibraryTests(unittest.TestCase):
         metadata = MusicSidecarProvider().fetch(audio, "audio", {})
         self.assertEqual(metadata["artist"], "歌手")
         self.assertEqual(metadata["album"], "专辑")
+
+    def test_music_job_rejects_root_without_scanned_audio(self):
+        jobs = MusicJobs(self.database, lambda _path: True, lambda value: Path(value))
+        with self.assertRaisesRegex(ValueError, "尚未扫描到音乐文件"):
+            jobs.start(self.root_record["id"], {})
+
+    def test_roots_include_audio_counts(self):
+        (self.root / "song.flac").write_bytes(b"audio")
+        (self.root / "movie.mkv").write_bytes(b"video")
+        scan_root(self.database, self.root_record["id"])
+        root = self.database.roots()[0]
+        self.assertEqual(root["asset_count"], 2)
+        self.assertEqual(root["audio_count"], 1)
 
     def test_incremental_scan_and_duplicates(self):
         content = b"same-image-content"

@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0b1020">
+    <style>html:not(.app-ready) body{visibility:hidden}[hidden]{display:none!important}.view.active{animation:none}</style>
     <base href="/app/meizang/">
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.9.0">
-  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.9.0">
+  <link rel="stylesheet" href="provider.css?v=0.9.1">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.9.1">
   </head>
   <body>
     <div class="app-shell">
@@ -41,7 +42,7 @@
           <button class="button primary" id="open-add-root"><span>＋</span> 选择媒体目录</button>
         </header>
 
-        <section class="view active" data-view="overview">
+        <section class="view" data-view="overview">
           <div class="hero-panel">
             <div>
               <span class="live-badge">本地优先 · NAS 原生</span>
@@ -140,7 +141,7 @@
                   <label class="music-option"><input id="music-cover" type="checkbox" checked><span><strong>下载专辑封面</strong><small>从 Cover Art Archive 保存为专辑目录中的 cover.jpg。</small></span></label>
                   <label class="music-option"><input id="music-move" type="checkbox"><span><strong>整理文件位置</strong><small>移动到“艺术家 / 专辑 / 曲目 - 标题”的目录结构。</small></span></label>
                 </div>
-                <div id="music-library-setting" class="path-setting" hidden><label>整理后的音乐库<input id="music-library-root" placeholder="请选择目标目录"></label><button type="button" class="button path-picker" data-target="music-library-root">选择目录</button><small>目标目录必须已在飞牛中授权，并与来源位于同一文件系统。</small></div>
+                <div id="music-library-setting" class="path-setting" hidden><label>整理后的音乐库<input id="music-library-root" placeholder="请选择目标目录"></label><button type="button" class="button path-picker" data-target="music-library-root" data-title="选择整理后的音乐库">选择目录</button><small>目标目录必须已在飞牛中授权，并与来源位于同一文件系统。</small></div>
                 <div class="music-safety"><strong>开始前请注意</strong><p>默认只补全信息，不移动文件。MusicBrainz 匹配可信度不足时会跳过，并在任务结果中列出原因。</p></div>
                 <div class="mdc-start-action"><div><strong>使用 MusicBrainz 开放数据库</strong><small>遵守每秒最多一次请求限制，大型音乐库会在后台逐步处理。</small></div><button class="button primary" type="submit">开始音乐刮削</button></div>
               </form>
@@ -189,15 +190,16 @@
               </div>
               <div class="path-setting">
                 <label>真实媒体库目录<input id="qb-library-root" placeholder="例如：/vol1/影视/电影"></label>
-                <button type="button" class="button path-picker" data-target="qb-library-root">选择目录</button>
+                <button type="button" class="button path-picker" data-target="qb-library-root" data-title="选择真实媒体库目录">选择目录</button>
                 <small>真实原始文件将移动到这里；必须与下载目录位于同一文件系统。</small>
               </div>
               <details class="mapping-settings">
                 <summary>Docker 路径映射（可选）</summary>
                 <p>如果 qB 返回的容器路径与 fnOS 路径不同，请同时填写下面两项。</p>
-                <div class="provider-fields">
-                  <label>qB 远端路径前缀<input id="qb-remote-prefix" placeholder="例如：/downloads"></label>
-                  <label>fnOS 本地路径前缀<input id="qb-local-prefix" placeholder="例如：/vol1/下载"><button type="button" class="text-button path-picker" data-target="qb-local-prefix">选择目录</button></label>
+                <label>qB 远端路径前缀<input id="qb-remote-prefix" placeholder="例如：/downloads"></label>
+                <div class="path-setting compact">
+                  <label>fnOS 本地路径前缀<input id="qb-local-prefix" placeholder="例如：/vol1/下载"></label>
+                  <button type="button" class="button path-picker" data-target="qb-local-prefix" data-title="选择 fnOS 本地路径前缀">选择目录</button>
                 </div>
               </details>
               <div class="qb-options">
@@ -244,6 +246,6 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.9.0"></script>
+    <script type="module" src="app.js?v=0.9.1"></script>
   </body>
 </html>
