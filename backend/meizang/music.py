@@ -39,7 +39,7 @@ class MusicBrainzClient:
             delay = 1.05 - (time.monotonic() - _last_request)
             if delay > 0:
                 time.sleep(delay)
-            request = Request(url, headers={"Accept": "application/json", "User-Agent": "Meizang/0.9 (https://github.com/dengyintao/meizang)"})
+            request = Request(url, headers={"Accept": "application/json", "User-Agent": "Meizang/0.9.2 (https://github.com/dengyintao/meizang)"})
             with self.opener.open(request, timeout=20) as response:
                 payload = json.load(response)
             _last_request = time.monotonic()
@@ -78,7 +78,7 @@ class MusicBrainzClient:
             return False
         request = Request(
             "https://coverartarchive.org/release/{}/front-500".format(release_id),
-            headers={"User-Agent": "Meizang/0.9 (https://github.com/dengyintao/meizang)"},
+            headers={"User-Agent": "Meizang/0.9.2 (https://github.com/dengyintao/meizang)"},
         )
         try:
             with self.opener.open(request, timeout=30) as response, destination.open("wb") as output:
@@ -126,7 +126,7 @@ class MusicJobs:
             if existing_id and self.jobs.get(existing_id, {}).get("status") == "running":
                 return dict(self.jobs[existing_id])
         job_id = uuid.uuid4().hex
-        job = {"id": job_id, "root_id": root_id, "status": "running", "progress": 0, "total": 0, "matched": 0, "organized": 0, "failed": 0, "errors": [], "message": "正在读取音乐文件"}
+        job = {"id": job_id, "root_id": root_id, "status": "running", "cancel_requested": False, "progress": 0, "total": 0, "matched": 0, "organized": 0, "failed": 0, "errors": [], "message": "正在读取音乐文件"}
         with self.lock:
             self.jobs[job_id] = job
             self.root_jobs[root_id] = job_id
@@ -148,7 +148,11 @@ class MusicJobs:
         if options.get("move_files"):
             output_root = self.normalize_directory(str(options.get("library_root", "")))
         self._update(job_id, total=len(assets), message="开始匹配 MusicBrainz")
+        canceled = False
         for index, asset in enumerate(assets, 1):
+            if (self.get(job_id) or {}).get("cancel_requested"):
+                canceled = True
+                break
             path = Path(asset["path"])
             try:
                 if not self.authorize_path(path):
@@ -187,7 +191,8 @@ class MusicJobs:
             except Exception as error:
                 with self.lock:
                     self.jobs[job_id]["failed"] += 1
-                    self.jobs[job_id]["errors"].append({"path": str(path), "reason": str(error)})
+                    if len(self.jobs[job_id]["errors"]) < 100:
+                        self.jobs[job_id]["errors"].append({"path": str(path), "reason": str(error)})
             self._update(job_id, progress=index, message="已处理 {}/{}".format(index, len(assets)))
         try:
             scan_root(self.database, root["id"], force_metadata=True)
@@ -196,6 +201,9 @@ class MusicJobs:
                 scan_root(self.database, output["id"], force_metadata=True)
         except Exception:
             pass
+        if canceled:
+            self._update(job_id, status="canceled", message="音乐任务已取消")
+            return
         job = self.get(job_id) or {}
         message = "音乐整理完成"
         if job.get("failed") and not job.get("matched"):
@@ -219,3 +227,17 @@ class MusicJobs:
             if not self.jobs:
                 return None
             return dict(next(reversed(self.jobs.values())))
+
+    def cancel(self, job_id: str) -> Dict[str, Any]:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise ValueError("音乐任务不存在")
+            if job["status"] == "running":
+                job.update(cancel_requested=True, message="正在取消音乐任务")
+            return dict(job)
+
+    def is_running(self, root_id: int) -> bool:
+        with self.lock:
+            job_id = self.root_jobs.get(root_id)
+            return bool(job_id and self.jobs.get(job_id, {}).get("status") == "running")

@@ -9,8 +9,8 @@
     <title>媒藏</title>
     <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="provider.css?v=0.9.1">
-  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.9.1">
+  <link rel="stylesheet" href="provider.css?v=0.9.2">
+  <link rel="stylesheet" href="duplicate-cleanup.css?v=0.9.2">
   </head>
   <body>
     <div class="app-shell">
@@ -25,7 +25,7 @@
           <a href="#scraping" data-route="scraping"><span>⌁</span>影片刮削</a>
           <a href="#music" data-route="music"><span>♫</span>音乐整理</a>
           <a href="#duplicates" data-route="duplicates"><span>◉</span>重复文件</a>
-          <a href="#settings" data-route="settings"><span>⚙</span>目录设置</a>
+          <a href="#settings" data-route="settings"><span>⚙</span>应用设置</a>
         </nav>
         <div class="sidebar-foot">
           <span class="status-dot"></span>
@@ -49,7 +49,7 @@
               <h2>你的媒体，<br><em>井然有序。</em></h2>
               <p>统一索引照片、影片与音乐。数据留在 NAS，媒藏只帮你看清并整理它们。</p>
             </div>
-            <div class="hero-orbit" aria-hidden="true"><span>PHOTO</span><span>VIDEO</span><span>AUDIO</span><b>DK</b></div>
+            <div class="hero-orbit" aria-hidden="true"><span>PHOTO</span><span>VIDEO</span><span>AUDIO</span><b>藏</b></div>
           </div>
 
           <div class="stat-grid">
@@ -78,6 +78,7 @@
               <button class="active" data-type="all">全部</button><button data-type="image">图片</button><button data-type="video">视频</button><button data-type="audio">音频</button>
             </div>
             <label class="search"><span>⌕</span><input id="asset-search" type="search" placeholder="搜索文件名、标题或路径"></label>
+            <span id="asset-result-info" class="asset-result-info"></span>
           </div>
           <div id="asset-grid" class="asset-grid"></div>
         </section>
@@ -246,6 +247,6 @@
       </form>
     </dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=0.9.1"></script>
+    <script type="module" src="app.js?v=0.9.2"></script>
   </body>
 </html>

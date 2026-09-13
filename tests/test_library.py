@@ -62,6 +62,35 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(root["asset_count"], 2)
         self.assertEqual(root["audio_count"], 1)
 
+    def test_removing_root_only_deletes_index(self):
+        audio = self.root / "song.flac"
+        audio.write_bytes(b"audio")
+        scan_root(self.database, self.root_record["id"])
+        removed = self.database.delete_root(self.root_record["id"])
+        self.assertEqual(removed["path"], str(self.root))
+        self.assertTrue(audio.exists())
+        self.assertEqual(self.database.assets(), [])
+
+    def test_application_rejects_overlapping_roots(self):
+        nested = self.root / "album"
+        nested.mkdir()
+        application = MeizangApplication(
+            self.database.path, str(Path(__file__).resolve().parents[1] / "frontend"),
+        )
+        with self.assertRaisesRegex(ValueError, "相互包含"):
+            application.add_library_root(str(nested), "重复范围")
+
+    def test_music_job_can_be_canceled(self):
+        (self.root / "song.flac").write_bytes(b"audio")
+        scan_root(self.database, self.root_record["id"])
+        jobs = MusicJobs(self.database, lambda _path: True, lambda value: Path(value))
+        with patch("meizang.music.threading.Thread") as thread:
+            job = jobs.start(self.root_record["id"], {})
+            thread.assert_called_once()
+        canceled = jobs.cancel(job["id"])
+        self.assertTrue(canceled["cancel_requested"])
+        self.assertTrue(jobs.is_running(self.root_record["id"]))
+
     def test_incremental_scan_and_duplicates(self):
         content = b"same-image-content"
         (self.root / "one.JPG").write_bytes(content)

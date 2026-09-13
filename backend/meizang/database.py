@@ -160,6 +160,16 @@ class LibraryDatabase:
             ).fetchone()
             return dict(row)
 
+    def delete_root(self, root_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM library_roots WHERE id = ?", (root_id,)
+            ).fetchone()
+            if not row:
+                return None
+            connection.execute("DELETE FROM library_roots WHERE id = ?", (root_id,))
+            return dict(row)
+
     def settings(self) -> Dict[str, str]:
         values = dict(DEFAULT_SETTINGS)
         with self.connect() as connection:

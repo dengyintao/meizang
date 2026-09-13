@@ -293,6 +293,18 @@ class MeizangApplication:
             raise ValueError("目录没有读取权限")
         return path
 
+    def add_library_root(self, raw_path: str, label: str = "") -> Dict[str, Any]:
+        path = self.normalize_root(raw_path)
+        for root in self.database.roots():
+            existing = Path(root["path"]).resolve()
+            if path == existing:
+                return self.database.add_root(str(path), label or root.get("label", ""))
+            if existing in path.parents or path in existing.parents:
+                raise ValueError(
+                    "不能添加相互包含的媒体目录；已存在：{}。请保留范围更合适的一个目录。".format(existing)
+                )
+        return self.database.add_root(str(path), label)
+
     def is_authorized_path(self, path: Path) -> bool:
         candidate = path.parent.resolve() / path.name
         return not (self.enforce_allowed_paths or self.allowed_paths) or any(
@@ -555,6 +567,8 @@ def make_handler(application: MeizangApplication):
                     if application.jobs.is_running(root_id):
                         raise ValueError("该目录仍在扫描，请等待扫描完成后再开始音乐刮削")
                     return self.send_json(202, application.music.start(root_id, payload))
+                if path.startswith("/api/music/jobs/") and path.endswith("/cancel"):
+                    return self.send_json(200, application.music.cancel(path.split("/")[-2]))
                 if path == "/api/settings/mdc/reset":
                     return self.send_json(200, application.mdc.config.reset())
                 if path.startswith("/api/mdc/jobs/") and path.endswith("/cancel"):
@@ -563,8 +577,10 @@ def make_handler(application: MeizangApplication):
                     application.refresh_allowed_paths()
                     return self.send_json(201, application.mdc.create_schedule(payload))
                 if path == "/api/roots":
-                    root = application.normalize_root(str(payload.get("path", "")).strip())
-                    return self.send_json(201, application.database.add_root(str(root), str(payload.get("label", "")).strip()))
+                    root = application.add_library_root(
+                        str(payload.get("path", "")).strip(), str(payload.get("label", "")).strip(),
+                    )
+                    return self.send_json(201, root)
                 if path == "/api/scans":
                     root_id = int(payload.get("root_id", 0))
                     if not application.database.root(root_id):
@@ -686,6 +702,17 @@ def make_handler(application: MeizangApplication):
                 if path.startswith("/api/mdc/schedules/"):
                     application.database.delete_mdc_schedule(int(path.rsplit("/", 1)[-1]))
                     return self.send_json(200, {"status": "ok"})
+                if path.startswith("/api/roots/"):
+                    root_id = int(path.rsplit("/", 1)[-1])
+                    if application.jobs.is_running(root_id) or application.music.is_running(root_id):
+                        raise ValueError("该目录仍有任务运行，请先等待任务结束或取消音乐任务")
+                    root = application.database.delete_root(root_id)
+                    if not root:
+                        return self.send_json(404, {"error": "媒体目录不存在"})
+                    return self.send_json(200, {
+                        "status": "ok", "path": root["path"],
+                        "message": "目录已从媒藏移除，磁盘文件未被删除",
+                    })
                 return self.send_json(404, {"error": "接口不存在"})
             except (ValueError, OSError) as error:
                 return self.send_json(400, {"error": str(error)})

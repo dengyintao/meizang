@@ -23,6 +23,14 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
 }
 
+function formatInterval(seconds) {
+  const value = Number(seconds);
+  if (value % 604800 === 0) return `每 ${value / 604800} 周`;
+  if (value % 86400 === 0) return `每 ${value / 86400} 天`;
+  if (value % 3600 === 0) return `每 ${value / 3600} 小时`;
+  return `每 ${Math.max(1, Math.round(value / 60))} 分钟`;
+}
+
 function toast(message, error = false) {
   const element = $('#toast');
   element.textContent = message;
@@ -102,8 +110,20 @@ async function loadRoots() {
   overview.innerHTML = state.roots.slice(0, 4).map(root => `
     <div class="root-row"><span class="root-icon">▣</span><div><strong>${escapeHtml(root.label || root.path.split('/').pop())}</strong><small>${escapeHtml(root.path)}</small></div><span>${root.asset_count} 项</span></div>`).join('');
   settings.innerHTML = state.roots.map(root => `
-    <article class="settings-root"><div><h3>${escapeHtml(root.label || root.path.split('/').pop())}</h3><p>${escapeHtml(root.path)} · ${root.asset_count} 个文件</p></div><div class="scan-info"><button class="button scan-button" data-root-id="${root.id}">立即扫描</button><span>${escapeHtml(root.last_scan_at || '尚未扫描')} · ${escapeHtml(root.last_scan_status)}</span></div></article>`).join('');
+    <article class="settings-root"><div><h3>${escapeHtml(root.label || root.path.split('/').pop())}</h3><p>${escapeHtml(root.path)} · ${root.asset_count} 个文件</p></div><div class="scan-info"><div class="root-actions"><button class="button scan-button" data-root-id="${root.id}">立即扫描</button><button class="text-button root-remove" data-root-id="${root.id}" data-root-path="${escapeHtml(root.path)}">移除</button></div><span>${escapeHtml(root.last_scan_at || '尚未扫描')} · ${escapeHtml(root.last_scan_status)}</span></div></article>`).join('');
   $$('.scan-button').forEach(button => button.addEventListener('click', () => startScan(Number(button.dataset.rootId), button)));
+  $$('.root-remove').forEach(button => button.addEventListener('click', async () => {
+    const path = button.dataset.rootPath;
+    if (!await confirmAction('移除媒体目录', `只会清除媒藏中的目录和索引，不会删除磁盘文件。\n\n${path}`, '移除目录')) return;
+    button.disabled = true;
+    try {
+      const result = await api(`/roots/${button.dataset.rootId}`, {method:'DELETE'});
+      toast(result.message || '目录已移除');
+      await Promise.all([loadRoots(), loadStats()]);
+      if (location.hash === '#library') await loadAssets();
+      if (location.hash === '#duplicates') await loadDuplicates();
+    } catch (error) { toast(error.message, true); button.disabled = false; }
+  }));
 }
 
 async function loadAssets() {
@@ -111,6 +131,9 @@ async function loadAssets() {
   grid.innerHTML = '<div class="empty-state">正在载入媒体库…</div>';
   const params = new URLSearchParams({ type: state.type, q: state.query, limit: '300' });
   const assets = await api(`/assets?${params}`);
+  $('#asset-result-info').textContent = assets.length >= 300
+    ? '当前显示前 300 项，可使用搜索缩小范围'
+    : `显示 ${assets.length} 项`;
   if (!assets.length) {
     grid.innerHTML = '<div class="panel empty-state">没有找到匹配的媒体文件。</div>';
     return;
@@ -367,7 +390,7 @@ async function pollScan(jobId) {
 
 function route() {
   const name = location.hash.slice(1) || 'overview';
-  const titles = { overview: '媒体概览', library: '媒体库', scraping: '影片刮削', music: '音乐整理', duplicates: '重复文件', settings: '目录设置' };
+  const titles = { overview: '媒体概览', library: '媒体库', scraping: '影片刮削', music: '音乐整理', duplicates: '重复文件', settings: '应用设置' };
   const target = titles[name] ? name : 'overview';
   $$('.view').forEach(view => view.classList.toggle('active', view.dataset.view === target));
   $$('.nav a').forEach(link => link.classList.toggle('active', link.dataset.route === target));
@@ -549,6 +572,11 @@ $('#qb-form').addEventListener('submit', async event => {
 for (const action of ['test', 'sync']) {
   $(`#qb-${action}`).addEventListener('click', async event => {
     const button = event.currentTarget;
+    if (action === 'sync' && !await confirmAction(
+      '立即整理 qB 任务',
+      '媒藏将暂停符合条件的任务，把真实影片移动到媒体库，并在下载位置建立软链接。请确认 qB 路径映射和媒体库目录设置正确。',
+      '开始整理',
+    )) return;
     button.disabled = true;
     try {
       const result = await api(`/qbittorrent/${action}`, {method: 'POST', body: JSON.stringify(action === 'test' ? qbPayload() : {})});
@@ -583,12 +611,21 @@ async function loadMusicSettings() {
 function renderMusicJob(job) {
   const percent = job.total ? Math.round(job.progress / job.total * 100) : 0;
   $('#music-job').className = 'music-job-card';
-  $('#music-job').innerHTML = `<div class="music-progress"><span style="width:${percent}%"></span></div><strong>${escapeHtml(job.message || '处理中')}</strong><p>${job.progress}/${job.total} · 匹配 ${job.matched} · 整理 ${job.organized} · 跳过 ${job.failed}</p>`;
+  const cancel = job.status === 'running' ? `<button type="button" class="text-button music-cancel" data-job="${job.id}" ${job.cancel_requested ? 'disabled' : ''}>${job.cancel_requested ? '正在取消…' : '取消任务'}</button>` : '';
+  $('#music-job').innerHTML = `<div class="music-progress"><span style="width:${percent}%"></span></div><div class="music-job-heading"><strong>${escapeHtml(job.message || '处理中')}</strong>${cancel}</div><p>${job.progress}/${job.total} · 匹配 ${job.matched} · 整理 ${job.organized} · 跳过 ${job.failed}</p>`;
   const errors = job.errors || [];
   const panel = $('#music-errors');
   panel.hidden = !errors.length;
-  panel.innerHTML = errors.length ? `<strong>未处理的文件与原因</strong><ul>${errors.map(item => `<li>${escapeHtml(item.path)}<br>${escapeHtml(item.reason)}</li>`).join('')}</ul>` : '';
+  panel.innerHTML = errors.length ? `<strong>未处理的文件与原因${job.failed > errors.length ? `（显示前 ${errors.length} 项）` : ''}</strong><ul>${errors.map(item => `<li>${escapeHtml(item.path)}<br>${escapeHtml(item.reason)}</li>`).join('')}</ul>` : '';
 }
+
+$('#music-job').addEventListener('click', async event => {
+  const button = event.target.closest('.music-cancel');
+  if (!button) return;
+  button.disabled = true;
+  try { renderMusicJob(await api(`/music/jobs/${button.dataset.job}/cancel`, {method:'POST'})); }
+  catch (error) { toast(error.message, true); button.disabled = false; }
+});
 
 async function pollMusicJob(job) {
   if (state.musicPollingJobId === job.id) return;
@@ -601,6 +638,11 @@ async function pollMusicJob(job) {
       current = await api(`/music/jobs/${current.id}`);
     }
     renderMusicJob(current);
+    if (current.status === 'canceled') {
+      await Promise.all([loadStats(), loadRoots(), loadAssets()]);
+      toast(`音乐任务已取消，已处理 ${current.progress}/${current.total}`);
+      return;
+    }
     if (current.status === 'failed') {
       toast(current.error || '音乐任务失败', true);
       return;
@@ -626,6 +668,13 @@ $('#music-form').addEventListener('submit', async event => {
   };
   if (!payload.root_id) return toast('请先选择音乐来源目录', true);
   if (payload.move_files && !payload.library_root) return toast('请选择整理后的音乐库目录', true);
+  const root = state.roots.find(item => item.id === payload.root_id);
+  const changes = [payload.write_tags && '写入标签', payload.download_cover && '下载封面', payload.move_files && '移动文件'].filter(Boolean).join('、');
+  if (!await confirmAction(
+    '开始音乐刮削',
+    `将处理“${root?.label || root?.path || '所选目录'}”中的 ${root?.audio_count || 0} 首音乐${changes ? `，并执行：${changes}` : ''}。大型音乐库可能耗时较长，可在任务卡片中取消。`,
+    '开始刮削',
+  )) return;
   button.disabled = true;
   try {
     await api('/settings/music', {method:'PUT', body:JSON.stringify({...payload, enabled:true})});
@@ -714,15 +763,21 @@ function mdcRunPayload() {
 
 async function loadMDC() {
   const [settings, jobs, schedules] = await Promise.all([api('/settings/mdc'), api('/mdc/jobs'), api('/mdc/schedules')]);
+  const statusNames = {queued:'等待中', running:'处理中', completed:'已完成', failed:'失败', canceled:'已取消'};
+  const kindNames = {scan:'影片处理', search:'番号匹配'};
   renderMDCConfig(settings);
   $('#mdc-root').innerHTML = state.roots.length ? state.roots.map(root => `<option value="${root.id}">${escapeHtml(root.label || root.path)} · ${escapeHtml(root.path)}</option>`).join('') : '<option value="">请先添加媒体目录</option>';
   $('#mdc-jobs').classList.toggle('empty-state', !jobs.length);
-  $('#mdc-jobs').innerHTML = jobs.length ? jobs.map(job => `<article class="mdc-job"><div><strong>${escapeHtml(job.kind)} · ${escapeHtml(job.status)}</strong><p>${escapeHtml(job.created_at)} · ${escapeHtml(job.message || job.error)}</p></div><div class="mdc-job-actions"><button class="text-button mdc-show-log" data-job="${job.id}">日志</button>${['queued','running'].includes(job.status) ? `<button class="text-button mdc-cancel" data-job="${job.id}">取消</button>` : ''}</div></article>`).join('') : '暂无 MDC 任务';
+  $('#mdc-jobs').innerHTML = jobs.length ? jobs.map(job => `<article class="mdc-job"><div><strong>${escapeHtml(kindNames[job.kind] || job.kind)} · ${escapeHtml(statusNames[job.status] || job.status)}</strong><p>${escapeHtml(job.created_at)} · ${escapeHtml(job.message || job.error)}</p></div><div class="mdc-job-actions"><button class="text-button mdc-show-log" data-job="${job.id}">日志</button>${['queued','running'].includes(job.status) ? `<button class="text-button mdc-cancel" data-job="${job.id}">取消</button>` : ''}</div></article>`).join('') : '暂无 MDC 任务';
   $$('.mdc-show-log').forEach(button => button.addEventListener('click', async () => { const job = await api(`/mdc/jobs/${button.dataset.job}`); $('#mdc-log').textContent = job.log_text || job.error || '暂无日志'; }));
   $$('.mdc-cancel').forEach(button => button.addEventListener('click', async () => { await api(`/mdc/jobs/${button.dataset.job}/cancel`, {method:'POST'}); await loadMDC(); }));
   $('#mdc-schedules').classList.toggle('empty-state', !schedules.length);
-  $('#mdc-schedules').innerHTML = schedules.length ? schedules.map(item => `<article class="mdc-schedule-item"><strong>${escapeHtml(item.name)}</strong><button class="text-button mdc-delete-schedule" data-schedule="${item.id}">删除</button><p>每 ${item.interval_seconds} 秒 · ${item.enabled ? '已启用' : '已暂停'}</p></article>`).join('') : '暂无定时任务';
-  $$('.mdc-delete-schedule').forEach(button => button.addEventListener('click', async () => { await api(`/mdc/schedules/${button.dataset.schedule}`, {method:'DELETE'}); await loadMDC(); }));
+  $('#mdc-schedules').innerHTML = schedules.length ? schedules.map(item => `<article class="mdc-schedule-item"><strong>${escapeHtml(item.name)}</strong><button class="text-button mdc-delete-schedule" data-schedule="${item.id}">删除</button><p>${formatInterval(item.interval_seconds)} · ${item.enabled ? '已启用' : '已暂停'}</p></article>`).join('') : '暂无定时任务';
+  $$('.mdc-delete-schedule').forEach(button => button.addEventListener('click', async () => {
+    if (!await confirmAction('删除定时任务', '该计划将不再自动运行，已有媒体文件和任务记录不会被删除。', '删除计划')) return;
+    await api(`/mdc/schedules/${button.dataset.schedule}`, {method:'DELETE'});
+    await loadMDC();
+  }));
 }
 
 $('#mdc-config-form').addEventListener('submit', async event => {

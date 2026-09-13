@@ -219,6 +219,10 @@
 .proxy-fields { grid-template-columns: 1fr; }
 .text-button { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; }
 .text-button:hover { color: var(--coral); }
+.text-button:disabled { opacity:.5; cursor:wait; }
+.root-actions,.music-job-heading { display:flex; align-items:center; justify-content:flex-end; gap:10px; }
+.music-job-heading { justify-content:space-between; }
+.asset-result-info { color:var(--muted); font-size:11px; white-space:nowrap; }
 
 .provider-credit {
   margin-top: 16px;
