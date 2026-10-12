@@ -6,6 +6,27 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON app_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON app_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS library_roots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL UNIQUE,
@@ -122,6 +143,23 @@ DEFAULT_SETTINGS = {
 }
 
 
+def _escape_like(value: str) -> str:
+    """转义 LIKE 模式中的通配符，与 SQL 中的 ESCAPE '\\' 配合使用。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _decode_asset(row) -> Optional[Dict[str, Any]]:
+    if not row:
+        return None
+    item = dict(row)
+    try:
+        item["metadata"] = json.loads(item.pop("metadata_json"))
+    except (TypeError, json.JSONDecodeError):
+        item["metadata"] = {}
+        item.pop("metadata_json", None)
+    return item
+
+
 class LibraryDatabase:
     def __init__(self, path: str):
         self.path = str(Path(path).expanduser())
@@ -190,6 +228,92 @@ class LibraryDatabase:
                 )
         return self.settings()
 
+    def count_users(self) -> int:
+        with self.connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()
+        return int(row["count"])
+
+    def create_user(self, username: str, password_hash: str, is_admin: bool = False) -> Dict[str, Any]:
+        username = username.strip()
+        if not username or len(username) > 32:
+            raise ValueError("用户名长度必须在 1 到 32 个字符之间")
+        with self.connect() as connection:
+            try:
+                cursor = connection.execute(
+                    "INSERT INTO app_users(username, password_hash, is_admin) VALUES(?,?,?)",
+                    (username, password_hash, 1 if is_admin else 0),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError("用户名已存在")
+            row = connection.execute(
+                "SELECT id, username, is_admin, created_at FROM app_users WHERE id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            item = dict(row)
+            item["is_admin"] = bool(item["is_admin"])
+            return item
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM app_users WHERE username=?", (username.strip(),)
+            ).fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            item["is_admin"] = bool(item["is_admin"])
+            return item
+
+    def update_user_password(self, user_id: int, password_hash: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE app_users SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (password_hash, user_id),
+            )
+
+    def create_session(self, session_id: str, user_id: int, token_hash: str, expires_at: float) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO app_sessions(id, user_id, token_hash, expires_at, last_seen_at) "
+                "VALUES(?,?,?,?,?)",
+                (session_id, user_id, token_hash, expires_at, expires_at),
+            )
+
+    def get_session(self, session_id: str, now: float) -> Optional[Dict[str, Any]]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT s.id, s.user_id, s.expires_at, s.last_seen_at, "
+                "u.username, u.is_admin "
+                "FROM app_sessions s JOIN app_users u ON u.id=s.user_id "
+                "WHERE s.id=? AND s.expires_at>?",
+                (session_id, now),
+            ).fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            item["is_admin"] = bool(item["is_admin"])
+            return item
+
+    def touch_session(self, session_id: str, now: float, expires_at: float) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE app_sessions SET last_seen_at=?, expires_at=? WHERE id=?",
+                (now, expires_at, session_id),
+            )
+
+    def delete_session(self, session_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM app_sessions WHERE id=?", (session_id,))
+
+    def delete_user_sessions(self, user_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM app_sessions WHERE user_id=?", (user_id,))
+
+    def delete_expired_sessions(self, now: float) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM app_sessions WHERE expires_at<=?", (now,))
+            return cursor.rowcount
+
     def roots(self) -> List[Dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -213,8 +337,8 @@ class LibraryDatabase:
             clauses.append("media_type = ?")
             values.append(media_type)
         if query:
-            clauses.append("(filename LIKE ? OR title LIKE ? OR relative_path LIKE ?)")
-            pattern = "%{}%".format(query)
+            clauses.append("(filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR relative_path LIKE ? ESCAPE '\\')")
+            pattern = "%{}%".format(_escape_like(query))
             values.extend([pattern, pattern, pattern])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         values.append(max(1, min(limit, 1000)))
@@ -226,16 +350,7 @@ class LibraryDatabase:
                 "FROM media_assets{} ORDER BY updated_at DESC, id DESC LIMIT ?".format(where),
                 values,
             ).fetchall()
-        result = []
-        for row in rows:
-            item = dict(row)
-            try:
-                item["metadata"] = json.loads(item.pop("metadata_json"))
-            except (TypeError, json.JSONDecodeError):
-                item["metadata"] = {}
-                item.pop("metadata_json", None)
-            result.append(item)
-        return result
+        return [_decode_asset(row) for row in rows]
 
     def asset(self, asset_id: int) -> Optional[Dict[str, Any]]:
         with self.connect() as connection:
@@ -246,22 +361,18 @@ class LibraryDatabase:
                 "FROM media_assets WHERE id = ?",
                 (asset_id,),
             ).fetchone()
-        if not row:
-            return None
-        item = dict(row)
-        try:
-            item["metadata"] = json.loads(item.pop("metadata_json"))
-        except (TypeError, json.JSONDecodeError):
-            item["metadata"] = {}
-            item.pop("metadata_json", None)
-        return item
+        return _decode_asset(row)
 
     def audio_assets(self, root_id: int) -> List[Dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT id FROM media_assets WHERE root_id=? AND media_type='audio' ORDER BY path", (root_id,)
+                "SELECT id, root_id, path, relative_path, filename, extension, "
+                "media_type, size, mtime_ns, sha256, title, year, duration, "
+                "width, height, codec, metadata_json, created_at, updated_at "
+                "FROM media_assets WHERE root_id=? AND media_type='audio' ORDER BY path",
+                (root_id,),
             ).fetchall()
-        return [item for row in rows if (item := self.asset(row["id"]))]
+        return [_decode_asset(row) for row in rows]
 
     def audio_asset_count(self, root_id: int) -> int:
         with self.connect() as connection:

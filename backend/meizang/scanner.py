@@ -62,14 +62,23 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
 
     pending = []
     pending_hashes = []
+    last_flush_at = time.monotonic()
 
     def flush_pending():
+        nonlocal last_flush_at
         if not pending:
             return
         with database.connect() as connection:
             for statement, values in pending:
                 connection.execute(statement, values)
         pending.clear()
+        last_flush_at = time.monotonic()
+
+    def flush_throttled():
+        # 新文件批量落库：最多每 2 秒 flush 一次。
+        # 既保证前端能较快看到新文件，又避免冷启动时每个文件一次事务拖慢扫描。
+        if time.monotonic() - last_flush_at >= 2.0:
+            flush_pending()
 
     def queue_write(statement, values):
         pending.append((statement, values))
@@ -124,9 +133,10 @@ def scan_root(database: LibraryDatabase, root_id: int, force_metadata: bool = Fa
                     "scan_token=excluded.scan_token, updated_at=CURRENT_TIMESTAMP",
                     values,
                 )
-                # Make large videos visible immediately. Full-file hashing may take
-                # minutes on a NAS and is only needed to finish duplicate detection.
-                flush_pending()
+                # 大文件先入库、哈希延后：前端可较快看到新文件，
+                # 全文件哈希（NAS 上可能耗时数分钟）只用于完成重复检测。
+                # 落库节流：避免冷启动时每个新文件触发一次事务。
+                flush_throttled()
                 counters["updated" if old else "inserted"] += 1
                 pending_hashes.append((path, stat.st_size, stat.st_mtime_ns))
             except (OSError, ValueError):

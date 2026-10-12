@@ -6,11 +6,21 @@ const trimSdk = new TrimApp();
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
+function loginUrl() {
+  const here = location.pathname + location.search;
+  return `${PREFIX}/login.html?next=${encodeURIComponent(here)}`;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${PREFIX}/api${path}`, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
   });
+  if (response.status === 401) {
+    // 未登录或会话过期：去登录页（登录页自身不调用 api，不会循环跳转）
+    if (!location.pathname.endsWith('/login.html')) location.href = loginUrl();
+    throw new Error('需要登录');
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
   return data;
@@ -837,8 +847,32 @@ $('#mdc-config-search').addEventListener('input', event => {
   });
 });
 
+function renderUserChip(status) {
+  const chip = $('#current-user');
+  const logoutBtn = $('#logout-btn');
+  chip.hidden = false;
+  chip.textContent = '';
+  const label = status.method === 'nas' ? 'NAS · ' : status.method === 'token' ? 'Token · ' : '';
+  chip.append(document.createTextNode(label));
+  const name = document.createElement('b');
+  name.textContent = status.username || '用户';
+  chip.append(name);
+  // 只有本地会话登录才有可撤销的会话；NAS 网关与 Token 模式隐藏退出按钮
+  logoutBtn.hidden = status.method !== 'session';
+}
+
 async function initialize() {
   try {
+    const status = await api('/auth/status');
+    if (!status.logged_in) {
+      location.href = loginUrl();
+      return;
+    }
+    renderUserChip(status);
+    $('#logout-btn').addEventListener('click', async () => {
+      try { await api('/auth/logout', { method: 'POST' }); } catch (error) { /* 忽略登出错误 */ }
+      location.href = `${PREFIX}/login.html`;
+    });
     await Promise.all([loadHealth(), loadStats(), loadRoots(), loadProviderSettings(), loadQBSettings()]);
   } catch (error) {
     toast(error.message, true);

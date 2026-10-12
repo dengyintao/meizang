@@ -43,6 +43,21 @@ chmod +x scripts/run-dev.sh
 
 如果系统安装了 `ffprobe`，扫描音视频时会自动提取技术元数据；没有安装时仍可正常建立文件索引。
 
+## 登录与访问控制
+
+**通过飞牛桌面进入**：统一网关已校验 NAS 会话，应用直接信任网关注入的
+`X-Trim-Username` / `X-Trim-Isadmin` 身份头，NAS 账户免登录即用
+（NAS 管理员即应用管理员）。注意这些身份头仅在 Unix Socket 网关模式下采信，
+直连 TCP 端口时会被忽略，防止伪造。
+
+**直接访问 Web 端口**：首次打开会自动跳转到登录页引导创建管理员账户
+（用户名 1~32 字符，密码至少 8 位，scrypt 哈希存储）。登录后签发 7 天有效期的
+HttpOnly 会话 Cookie（服务端只存哈希），连续 8 次登录失败会锁定 IP 10 分钟。
+
+**API Token**（可选，供脚本调用）：设置 `MEIZANG_TOKEN`（或启动参数 `--token`）
+后，请求携带 `Authorization: Bearer <token>` 可直接调用 `/api/*`，
+与会话登录并存。`/api/health` 健康检查始终免认证。
+
 ## 构建飞牛 FPK
 
 安装飞牛官方 `fnpack 1.2.3` 后：
