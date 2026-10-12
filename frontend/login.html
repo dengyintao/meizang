@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 媒藏</title>
+<style>
+:root{
+  --bg:#0b0f1d; --surface:#141a2e; --surface-2:#1a2138; --line:#232c49;
+  --text:#eef1fa; --muted:#8b93b0; --coral:#ff6b57; --lime:#b9ed68;
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;color:var(--text);
+  background:radial-gradient(circle at 80% 0,#151d35 0,transparent 34%),var(--bg);
+  font-family:Inter,"SF Pro Display","PingFang SC",system-ui,sans-serif}
+.card{width:min(92vw,400px);background:var(--surface);border:1px solid var(--line);
+  border-radius:20px;padding:38px 34px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+.mark{display:grid;place-items:center;width:52px;height:52px;border-radius:15px;
+  background:var(--coral);color:#1c0b08;font-weight:950;font-size:24px;margin-bottom:18px}
+h1{font-size:24px;margin:0 0 6px;letter-spacing:-.5px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 26px;line-height:1.6}
+label{display:block;font-size:12px;font-weight:700;margin:16px 0 6px;color:var(--muted)}
+input{width:100%;border:1px solid var(--line);background:#0c1120;color:#fff;
+  padding:12px 14px;border-radius:10px;outline:none;font-size:14px}
+input:focus{border-color:var(--coral)}
+button{width:100%;margin-top:24px;border:0;background:var(--coral);color:#1c0b08;
+  padding:13px;border-radius:11px;font-weight:800;font-size:15px;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+.error{display:none;margin-top:14px;font-size:12px;color:var(--coral);
+  background:rgba(255,107,87,.08);border:1px solid rgba(255,107,87,.25);
+  padding:10px 12px;border-radius:10px;line-height:1.5}
+.hint{margin-top:18px;font-size:11px;color:var(--muted);text-align:center;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="mark">藏</div>
+  <h1 id="title">登录媒藏</h1>
+  <p class="sub" id="subtitle">请输入管理员账户登录。</p>
+  <form id="form">
+    <label>用户名<input id="username" autocomplete="username" maxlength="32"></label>
+    <label>密码<input id="password" type="password" autocomplete="current-password" maxlength="128"></label>
+    <label id="confirm-wrap" style="display:none">确认密码<input id="confirm" type="password" autocomplete="new-password" maxlength="128"></label>
+    <div class="error" id="error"></div>
+    <button id="submit" type="submit">登录</button>
+  </form>
+  <p class="hint" id="hint">通过飞牛桌面进入时将自动使用 NAS 账户登录，无需在此输入。</p>
+</div>
+<script>
+const PREFIX = location.pathname.startsWith('/app/meizang') ? '/app/meizang' : '';
+const next = new URLSearchParams(location.search).get('next') || (PREFIX ? PREFIX + '/' : '/');
+const $ = (id) => document.getElementById(id);
+let mode = 'login';
+
+function showError(message) {
+  const el = $('error');
+  el.textContent = message;
+  el.style.display = 'block';
+}
+
+async function init() {
+  try {
+    const status = await (await fetch(`${PREFIX}/api/auth/status`)).json();
+    if (status.logged_in) { location.href = next; return; }
+    if (status.needs_setup) {
+      mode = 'setup';
+      $('title').textContent = '创建管理员账户';
+      $('subtitle').textContent = '首次使用，请先创建一个管理员账户（密码至少 8 位）。';
+      $('confirm-wrap').style.display = 'block';
+      $('submit').textContent = '创建并登录';
+      $('hint').textContent = '该账户用于直接访问媒藏 Web 端口时的登录；通过飞牛桌面进入不受影响。';
+    }
+  } catch (e) { showError('无法连接服务：' + e.message); }
+}
+
+$('form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const username = $('username').value.trim();
+  const password = $('password').value;
+  if (!username || !password) { showError('请输入用户名和密码'); return; }
+  if (mode === 'setup') {
+    if (password.length < 8) { showError('密码长度至少 8 位'); return; }
+    if (password !== $('confirm').value) { showError('两次输入的密码不一致'); return; }
+  }
+  $('submit').disabled = true;
+  $('error').style.display = 'none';
+  try {
+    const response = await fetch(`${PREFIX}/api/auth/${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+    location.href = next;
+  } catch (e) {
+    showError(e.message);
+    $('submit').disabled = false;
+  }
+});
+
+init();
+</script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+import hmac
 import json
 import mimetypes
 import os
@@ -6,14 +7,29 @@ import socket
 import socketserver
 import subprocess
 import threading
+import time
 import traceback
 import uuid
+from http import cookies as http_cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import __version__
+from .auth import (
+    SESSION_COOKIE,
+    SESSION_TTL_SECONDS,
+    SESSION_TOUCH_INTERVAL_SECONDS,
+    LoginRateLimiter,
+    api_authorized,
+    check_bearer_token,
+    hash_password,
+    new_session_id,
+    resolve_auth_context,
+    session_lookup_id,
+    verify_password,
+)
 from .database import LibraryDatabase
 from .duplicate_cleanup import delete_duplicate_file, delete_duplicates
 from .fnos_api import shared_accessible_folders
@@ -24,6 +40,21 @@ from .providers.local import media_tool_env
 from .providers.tmdb import TMDBProvider
 from .qbittorrent import validate_qb_url
 from .scanner import scan_root
+
+
+def api_authorized(api_token: str, path: str, authorization: str) -> bool:
+    """API 访问鉴权。
+
+    api_token 为空表示不启用认证（本地开发默认行为，保持向后兼容）。
+    启用后所有 /api/* 接口都需要 Authorization: Bearer <token>，
+    /api/health 豁免以便容器健康检查，静态页面不涉及敏感数据保持开放。
+    """
+    if not path.startswith("/api/") or path == "/api/health":
+        return True
+    if not api_token:
+        return True
+    scheme, _, credential = (authorization or "").partition(" ")
+    return scheme.lower() == "bearer" and hmac.compare_digest(credential, api_token)
 
 
 def validate_proxy_url(proxy_url: str) -> str:
@@ -180,7 +211,10 @@ class ScanJobs:
         return job
 
     def _run(self, job_id: str) -> None:
-        job = self.jobs[job_id]
+        with self.lock:
+            job = self.jobs.get(job_id)
+        if not job:
+            return
         try:
             result = scan_root(self.database, job["root_id"], job.get("force_metadata", False))
             with self.lock:
@@ -250,12 +284,17 @@ class DuplicateCleanupJobs:
 
 
 class MeizangApplication:
-    def __init__(self, database_path: str, static_dir: str, prefix: str = "/app/meizang"):
+    def __init__(self, database_path: str, static_dir: str, prefix: str = "/app/meizang", api_token: str = ""):
         self.database = LibraryDatabase(database_path)
         self.static_dir = Path(static_dir).resolve()
         self.data_dir = Path(database_path).expanduser().resolve().parent
         self.thumbnail_dir = self.data_dir / "thumbnails"
         self.prefix = prefix.rstrip("/")
+        self.api_token = (api_token or os.environ.get("MEIZANG_TOKEN", "")).strip()
+        # 仅当经由飞牛统一网关 Unix Socket 进入时，才采信网关注入的 NAS 身份头；
+        # 直连 TCP 端口时忽略这些头，防止客户端伪造。
+        self.trust_gateway_headers = False
+        self.login_limiter = LoginRateLimiter()
         self.jobs = ScanJobs(self.database)
         raw_paths = os.environ.get("TRIM_DATA_ACCESSIBLE_PATHS", "")
         self.allowed_paths = [Path(item).resolve() for item in raw_paths.split(":") if item]
@@ -310,6 +349,51 @@ class MeizangApplication:
         return not (self.enforce_allowed_paths or self.allowed_paths) or any(
             candidate == root or root in candidate.parents for root in self.allowed_paths
         )
+
+    def resolve_request_identity(self, headers, cookies: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        return resolve_auth_context(
+            self.database, self.api_token, self.trust_gateway_headers, headers, cookies,
+        )
+
+    def needs_setup(self) -> bool:
+        # 网关模式下 NAS 管理员即应用管理员，无需本地初始化
+        return self.database.count_users() == 0 and not self.trust_gateway_headers
+
+    def auth_status(self, headers, cookies: Dict[str, str]) -> Dict[str, Any]:
+        context = self.resolve_request_identity(headers, cookies)
+        return {
+            "logged_in": bool(context),
+            "username": context["username"] if context else "",
+            "is_admin": bool(context and context["is_admin"]),
+            "method": context["method"] if context else "",
+            "needs_setup": self.needs_setup() and not bool(context),
+            "token_configured": bool(self.api_token),
+            "gateway_nas": self.trust_gateway_headers,
+        }
+
+    def issue_session(self, user_id: int) -> str:
+        """签发会话：返回写入 Cookie 的随机令牌，服务端只存其哈希。"""
+        now = time.time()
+        self.database.delete_expired_sessions(now)
+        raw_token = new_session_id()
+        lookup_id = session_lookup_id(raw_token)
+        self.database.create_session(lookup_id, user_id, lookup_id, now + SESSION_TTL_SECONDS)
+        return raw_token
+
+    def find_session(self, raw_token: str) -> Optional[Dict[str, Any]]:
+        if not raw_token:
+            return None
+        return self.database.get_session(session_lookup_id(raw_token), time.time())
+
+    def revoke_session(self, raw_token: str) -> None:
+        if raw_token:
+            self.database.delete_session(session_lookup_id(raw_token))
+
+    def maybe_touch_session(self, raw_token: str) -> None:
+        now = time.time()
+        session = self.find_session(raw_token)
+        if session and now - (session["last_seen_at"] or 0) >= SESSION_TOUCH_INTERVAL_SECONDS:
+            self.database.touch_session(session_lookup_id(raw_token), now, now + SESSION_TTL_SECONDS)
 
     def normalize_writable_directory(self, raw_path: str) -> Path:
         path = self.normalize_root(raw_path)
@@ -375,14 +459,88 @@ def make_handler(application: MeizangApplication):
         def log_message(self, format_string, *args):
             print("{} - {}".format(self.client_address or "gateway", format_string % args))
 
-        def send_json(self, status: int, payload: Any):
+        def send_json(self, status: int, payload: Any, extra_headers: Optional[Dict[str, str]] = None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
+
+        def get_cookies(self) -> Dict[str, str]:
+            jar = http_cookies.SimpleCookie()
+            try:
+                jar.load(self.headers.get("Cookie", ""))
+            except Exception:
+                return {}
+            return {key: morsel.value for key, morsel in jar.items()}
+
+        def session_cookie_header(self, raw_token: str, max_age: int) -> Dict[str, str]:
+            return {
+                "Set-Cookie": "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}".format(
+                    SESSION_COOKIE, raw_token, max_age,
+                )
+            }
+
+        def clear_session_cookie_header(self) -> Dict[str, str]:
+            return {
+                "Set-Cookie": "{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".format(SESSION_COOKIE)
+            }
+
+        def client_ip(self) -> str:
+            address = self.client_address
+            if isinstance(address, tuple) and address:
+                return str(address[0])
+            # Unix Socket（飞牛网关）直连时没有对端 IP
+            return "unix-socket"
+
+        def auth_setup(self, payload: Dict[str, Any]):
+            """首次初始化管理员账户：仅当尚未创建任何本地用户且非网关模式时可用。"""
+            if not application.needs_setup():
+                raise ValueError("管理员账户已存在，无需初始化")
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", ""))
+            if not username or len(username) > 32:
+                raise ValueError("用户名长度必须在 1 到 32 个字符之间")
+            if len(password) < 8 or len(password) > 128:
+                raise ValueError("密码长度必须在 8 到 128 个字符之间")
+            user = application.database.create_user(username, hash_password(password), is_admin=True)
+            raw_token = application.issue_session(user["id"])
+            return self.send_json(
+                201,
+                {"username": user["username"], "is_admin": True},
+                self.session_cookie_header(raw_token, SESSION_TTL_SECONDS),
+            )
+
+        def auth_login(self, payload: Dict[str, Any]):
+            ip = self.client_ip()
+            locked, retry_after = application.login_limiter.is_locked(ip)
+            if locked:
+                return self.send_json(429, {"error": "登录失败次数过多，请 {} 秒后再试".format(retry_after)})
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", ""))
+            if not username or not password:
+                application.login_limiter.register_failure(ip)
+                raise ValueError("请输入用户名和密码")
+            user = application.database.get_user_by_username(username)
+            # 统一错误信息，避免用户名枚举
+            if not user or not verify_password(password, user["password_hash"]):
+                application.login_limiter.register_failure(ip)
+                raise ValueError("用户名或密码错误")
+            application.login_limiter.register_success(ip)
+            raw_token = application.issue_session(user["id"])
+            return self.send_json(
+                200,
+                {"username": user["username"], "is_admin": user["is_admin"]},
+                self.session_cookie_header(raw_token, SESSION_TTL_SECONDS),
+            )
+
+        def auth_logout(self):
+            application.revoke_session(self.get_cookies().get(SESSION_COOKIE, ""))
+            return self.send_json(200, {"status": "ok"}, self.clear_session_cookie_header())
 
         def send_file(self, candidate: Path, download_name: str = "", inline: bool = True):
             mime = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
@@ -444,6 +602,21 @@ def make_handler(application: MeizangApplication):
             except (ValueError, json.JSONDecodeError):
                 raise ValueError("请求 JSON 无效")
 
+        def require_api_auth(self, path: str) -> bool:
+            context = application.resolve_request_identity(self.headers, self.get_cookies())
+            if context:
+                if context.get("method") == "session":
+                    application.maybe_touch_session(context.get("session_id", ""))
+                self.auth_context = context
+                return True
+            self.auth_context = None
+            # 401 时告诉前端走哪种登录：有本地用户（或可初始化）走登录页，
+            # 仅配置了 API Token 且无本地用户时走 Token 输入。
+            auth_hint = "session" if (application.database.count_users() > 0
+                                      or not application.api_token) else "token"
+            self.send_json(401, {"error": "需要登录", "auth": auth_hint})
+            return False
+
         def route_path(self):
             parsed = urlparse(self.path)
             path = parsed.path
@@ -458,6 +631,11 @@ def make_handler(application: MeizangApplication):
                 path, query = self.route_path()
                 if path == "/api/health":
                     return self.send_json(200, {"status": "ok", "version": __version__})
+                if path == "/api/auth/status":
+                    return self.send_json(
+                        200, application.auth_status(self.headers, self.get_cookies()))
+                if not self.require_api_auth(path):
+                    return
                 if path == "/api/stats":
                     return self.send_json(200, application.database.stats())
                 if path == "/api/roots":
@@ -526,6 +704,14 @@ def make_handler(application: MeizangApplication):
             try:
                 path, _query = self.route_path()
                 payload = self.body_json()
+                if path == "/api/auth/setup":
+                    return self.auth_setup(payload)
+                if path == "/api/auth/login":
+                    return self.auth_login(payload)
+                if not self.require_api_auth(path):
+                    return
+                if path == "/api/auth/logout":
+                    return self.auth_logout()
                 if path == "/api/settings/providers/test":
                     settings = application.database.settings()
                     tmdb = payload.get("tmdb", {})
@@ -613,6 +799,8 @@ def make_handler(application: MeizangApplication):
         def do_PUT(self):
             try:
                 path, _query = self.route_path()
+                if not self.require_api_auth(path):
+                    return
                 payload = self.body_json()
                 if path == "/api/settings/music":
                     library_root = str(payload.get("library_root", "")).strip()
@@ -682,6 +870,8 @@ def make_handler(application: MeizangApplication):
         def do_PATCH(self):
             try:
                 path, _query = self.route_path()
+                if not self.require_api_auth(path):
+                    return
                 payload = self.body_json()
                 if path.startswith("/api/mdc/schedules/"):
                     schedule_id = int(path.rsplit("/", 1)[-1])
@@ -699,6 +889,8 @@ def make_handler(application: MeizangApplication):
         def do_DELETE(self):
             try:
                 path, _query = self.route_path()
+                if not self.require_api_auth(path):
+                    return
                 if path.startswith("/api/mdc/schedules/"):
                     application.database.delete_mdc_schedule(int(path.rsplit("/", 1)[-1]))
                     return self.send_json(200, {"status": "ok"})
@@ -745,8 +937,12 @@ class ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStre
     daemon_threads = True
 
 
-def serve(database_path: str, static_dir: str, host: str, port: int, socket_path: str, prefix: str):
-    application = MeizangApplication(database_path, static_dir, prefix)
+def serve(database_path: str, static_dir: str, host: str, port: int, socket_path: str, prefix: str,
+          api_token: str = ""):
+    application = MeizangApplication(database_path, static_dir, prefix, api_token)
+    # Unix Socket 模式即经由飞牛统一网关进入：网关已校验 NAS 会话，
+    # 此时采信其注入的 X-Trim-Username 等身份头实现 NAS 账户直接登录。
+    application.trust_gateway_headers = bool(socket_path)
     handler = make_handler(application)
     if socket_path:
         socket_file = Path(socket_path)

@@ -460,6 +460,29 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(result["updated"], 1)
         self.assertEqual(self.database.assets("video")[0]["title"], "刷新后的标题")
 
+    def test_search_escapes_like_wildcards(self):
+        (self.root / "100%.mp4").write_bytes(b"a")
+        (self.root / "1001.mp4").write_bytes(b"b")
+        (self.root / "a_b.mp4").write_bytes(b"c")
+        (self.root / "axb.mp4").write_bytes(b"d")
+        scan_root(self.database, self.root_record["id"])
+        percent_hits = {item["filename"] for item in self.database.assets(query="100%")}
+        self.assertEqual(percent_hits, {"100%.mp4"})
+        underscore_hits = {item["filename"] for item in self.database.assets(query="a_b")}
+        self.assertEqual(underscore_hits, {"a_b.mp4"})
+
+    def test_audio_assets_returns_full_records_in_one_query(self):
+        (self.root / "song1.flac").write_bytes(b"audio1")
+        (self.root / "song2.mp3").write_bytes(b"audio2")
+        (self.root / "movie.mkv").write_bytes(b"video")
+        scan_root(self.database, self.root_record["id"])
+        items = self.database.audio_assets(self.root_record["id"])
+        self.assertEqual({item["filename"] for item in items}, {"song1.flac", "song2.mp3"})
+        self.assertEqual([item["filename"] for item in items], ["song1.flac", "song2.mp3"])
+        for item in items:
+            self.assertIn("metadata", item)
+            self.assertEqual(item["media_type"], "audio")
+
 
 if __name__ == "__main__":
     unittest.main()
