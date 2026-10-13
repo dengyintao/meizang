@@ -29,6 +29,7 @@ Movie_Data_Capture 引擎来自用户提供的本地 GPL-3.0 源码版本，完�
 
 qB 整理说明见 [做种兼容整理](docs/QBITTORRENT.md)。
 Movie_Data_Capture 的功能边界、运行方式与许可证说明见 [MDC 集成说明](docs/MOVIE_DATA_CAPTURE.md)。
+服务器自动跟随 GitHub Release 升级的说明见 [自动更新](docs/AUTO_UPDATE.md)。
 
 ## 本地运行
 
